@@ -6014,18 +6014,4 @@ public class ConfigurationPage {
 				this.drp_Include_in_Notifications, value);
 		return GlobalController.brw.initElements(ConfigurationPage.class);
 	}
-	
-	public ConfigurationPage verufydropdownIncludeinNotifications4(String value)
-			throws Exception {
-		GlobalController.brw.isValuePresentInDropDown(
-				this.drp_Include_in_Notifications, value);
-		return GlobalController.brw.initElements(ConfigurationPage.class);
-	}
-	
-	public ConfigurationPage verufydropdownIncludeinNotifications5(String value)
-			throws Exception {
-		GlobalController.brw.isValuePresentInDropDown(
-				this.drp_Include_in_Notifications, value);
-		return GlobalController.brw.initElements(ConfigurationPage.class);
-	}
 }
