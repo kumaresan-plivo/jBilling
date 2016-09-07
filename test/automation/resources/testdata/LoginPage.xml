@@ -1,0 +1,27 @@
+<testdata>
+	<testdataset name="UserLab3" category="ul" testenv="develop|lab">
+		<username>admin</username>
+		<password>74AYg=o)VF</password>
+		<companyid>350</companyid>
+		<rememberme>true</rememberme>
+	</testdataset>
+	<testdataset name="Userlab3" category="ul" testenv="develop|lab">
+		<username>admin</username>
+		<password>Shashank@1</password>
+		<companyid>349</companyid>
+		<rememberme>true</rememberme>
+	</testdataset>
+	<testdataset name="UserDevelop" category="ul" testenv="develop|lab">
+		<username>admin</username>
+		<password>/59N?GV*c)</password>
+		<companyid>106</companyid>
+		<rememberme>true</rememberme>
+	</testdataset>
+	<testdataset name="InvalidCredentials" category="ul"
+		testenv="develop|lab">
+		<username>admin</username>
+		<password>invalid</password>
+		<companyid>000</companyid>
+		<rememberme>true</rememberme>
+	</testdataset>
+</testdata>

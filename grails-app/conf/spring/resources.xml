@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:jms="http://www.springframework.org/schema/jms"
+       xmlns:aop="http://www.springframework.org/schema/aop"
+       xmlns:util="http://www.springframework.org/schema/util"
+       xmlns:task="http://www.springframework.org/schema/task"
+       xmlns:tx="http://www.springframework.org/schema/tx"
+       xmlns:p="http://www.springframework.org/schema/p"
+       xmlns:batch="http://www.springframework.org/schema/batch"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns="http://www.springframework.org/schema/beans"
+       xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+       xmlns:jpa="http://www.springframework.org/schema/data/jpa"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/jms http://www.springframework.org/schema/jms/spring-jms.xsd
+           http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop.xsd
+           http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd
+           http://www.springframework.org/schema/batch http://www.springframework.org/schema/batch/spring-batch.xsd
+           http://www.springframework.org/schema/task http://www.springframework.org/schema/task/spring-task.xsd
+           http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+           http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx.xsd
+           http://www.springframework.org/schema/jdbc http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+           http://www.springframework.org/schema/data/jpa http://www.springframework.org/schema/data/jpa/spring-jpa.xsd">
+
+    <bean id="appContextInitializerBean" class="com.sapienter.jbilling.server.util.Context.InitializerBean"/>
+
+    <!--	spring batch configuration	-->
+    <import resource="springbatch-infrastructure.xml"/>
+    <import resource="springintegration-infrastructure.xml"/>
+    <import resource="billing-process-job-context.xml"/>
+    <import resource="ageing-process-job-context.xml"/>
+    <import resource="provisioning-resources.xml"/>
+    <import resource="jms-messaging-resources.xml"/>
+    <import resource="aop-security-resources.xml"/>
+    <import resource="validation-resources.xml"/>
+	<import resource="hsqldb-cache-resources.xml"/>
+    <import resource="mediation-config-resources.xml"/>
+    <import resource="classpath:database-production-context.xml"/>
+    <import resource="classpath:mediation-context.xml"/>
+    <import resource="classpath:master/master-batch-context.xml"/>
+    <import resource="classpath:slave/jms-remote-chunking-slave.xml"/>
+
+    <import resource="classpath:mediation-process-context.xml"/>
+    <import resource="classpath:audit-context.xml"/>
+
+    <import resource="edi-process-job-context.xml"/>
+    <import resource="boa-file-processing-job.xml"/>
+
+    <!--
+          ***************************************************
+          *         MAIN BEAN DEFINITIONS               *
+          ***************************************************
+    -->
+
+    <!-- Session Facade beans, used mostly for transaction control and other AOP -->
+    <bean id="itemSession" class="com.sapienter.jbilling.server.item.ItemSessionBean"/>
+    <bean id="notificationSession" class="com.sapienter.jbilling.server.notification.NotificationSessionBean"/>
+    <bean id="customerSession" class="com.sapienter.jbilling.server.customer.CustomerSessionBean"/>
+    <bean id="userSession" class="com.sapienter.jbilling.server.user.UserSessionBean"/>
+    <bean id="invoiceSession" class="com.sapienter.jbilling.server.invoice.InvoiceSessionBean"/>
+    <bean id="orderSession" class="com.sapienter.jbilling.server.order.OrderSessionBean"/>
+    <bean id="pluggableTaskSession" class="com.sapienter.jbilling.server.pluggableTask.PluggableTaskSessionBean"/>
+    <bean id="paymentSession" class="com.sapienter.jbilling.server.payment.PaymentSessionBean"/>
+    <bean id="mediationSession" class="com.sapienter.jbilling.server.mediation.MediationSessionBean"/>
+    <bean id="billingProcessSession" class="com.sapienter.jbilling.server.process.BillingProcessSessionBean"/>
+    <bean id="provisioningProcessSession" class="com.sapienter.jbilling.server.provisioning.ProvisioningProcessSessionBean"/>
+    <bean id="customerUsagePoolEvaluationSession" class="com.sapienter.jbilling.server.usagePool.CustomerUsagePoolEvaluationSessionBean"/>
+    <bean id="authenticationUserService" class="com.sapienter.jbilling.client.authentication.AuthenticationUserService"/>
+    <bean id="flatFileParser" class="com.sapienter.jbilling.server.fileProcessing.fileParser.FlatFileParser"/>
+    <bean id="ediTransactionSession" class="com.sapienter.jbilling.server.ediTransaction.EDITransactionSessionBean"/>
+
+    <!-- The web services API, which is used as main service in the GUI -->
+    <bean id="webServicesSession" class="com.sapienter.jbilling.server.util.WebServicesSessionSpringBean">
+        <aop:scoped-proxy/>
+    </bean>
+
+    <!-- The web services API, which is used as main service in the GUI -->
+    <bean id="migrationServicesSession" class="com.sapienter.jbilling.server.util.MigrationServicesSessionSpringBean">
+        <aop:scoped-proxy/>
+        <property name="webServicesSessionBean" ref="webServicesSession"/>
+    </bean>
+
+    <!-- Data Access Service beans -->
+    <bean id="internationalDescriptionDAS" class="com.sapienter.jbilling.server.util.db.InternationalDescriptionDAS"
+          factory-method="getInstance" scope="prototype">
+        <property name="jbDAS" ref="jbillingTableDAS"/>
+    </bean>
+
+    <bean id="jbillingTableDAS" class="com.sapienter.jbilling.server.util.db.JbillingTableDAS"
+          factory-method="getInstance" scope="prototype">
+        <property name="cache" ref="cacheProviderFacade"/>
+        <property name="cacheModel" ref="cacheModelReadOnly"/>
+    </bean>
+
+    <bean id="pluggableTaskDAS" class="com.sapienter.jbilling.server.pluggableTask.admin.PluggableTaskDAS"
+          factory-method="getInstance" scope="prototype">
+        <property name="cache" ref="cacheProviderFacade"/>
+        <property name="cacheModel" ref="cacheModelPTDTO"/>
+        <property name="flushModel" ref="flushModelPTDTO"/>
+    </bean>
+
+    <!-- Utility beans -->
+    <bean id="velocityEngine" class="org.springframework.ui.velocity.VelocityEngineFactoryBean"/>
+
+    <bean id="auditBL" class="com.sapienter.jbilling.server.audit.AuditBL"/>
+    <bean id="eventService" class="com.sapienter.jbilling.server.system.event.EventServiceImpl"/>
+    <bean id="jBillingJdbcTemplate" class="org.springframework.jdbc.core.JdbcTemplate">
+        <property name="dataSource" ref="dataSource" />
+    </bean>
+    <bean id="customerService" class="com.sapienter.jbilling.server.customer.CustomerJdbcTemplateService">
+        <property name="jdbcTemplate" ref="jBillingJdbcTemplate"/>
+        <property name="webServicesSessionBean" ref="webServicesSession"/>
+    </bean>
+    <bean id="orderService" class="com.sapienter.jbilling.server.order.OrderServiceImpl">
+        <property name="webServicesSessionBean" ref="webServicesSession"/>
+    </bean>
+</beans>

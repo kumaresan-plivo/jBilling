@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE format SYSTEM "mediation.dtd" >
+         <format>
+         <!--Identifies the CDR Record -->
+         <field>
+             <name>id</name>
+             <type>string</type>
+             <isKey/>
+         </field>
+         <!-- The start date of the meter read, Format: yyyy-MM-dd HH:mm:ss -->
+         <field>
+             <name>event-date-time</name>
+             <type>date</type>
+         </field>
+         <!-- Total consumption-->
+         <field>
+             <name>consumption</name>
+             <type>integer</type>
+         </field>
+         <!-- JBilling product ID.  -->
+         <field>
+             <name>product-id</name>
+             <type>string</type>
+         </field>
+         <!-- JBilling username of customer. Use for customer resolution -->
+         <field>
+             <name>userName</name>
+             <type>string</type>
+         </field>
+     </format>

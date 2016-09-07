@@ -1,0 +1,24 @@
+<!DOCTYPE suite SYSTEM "http://testng.org/testng-1.0.dtd">
+
+<suite thread-count="5" verbose="1" name="SanityTestScript"
+	annotations="JDK">
+
+	<test name="debug" junit="false" preserve-order="true">
+		<classes>
+			<class name="com.jbilling.test.VerifyUserIsAbleToCancelPurchaseOrder">	
+ 			</class>
+ 			<class name="com.jbilling.test.VerifyUserIsAbleToSeeAllOrderDetailsOfRespectiveCustomer">
+ 			</class> 
+ 			<class name="com.jbilling.test.VerifyUserIsAbleToEditPurchaseOrder">
+ 			</class> 
+ 			<class name="com.jbilling.test.VerifyUserIsAbleToCreatePurchaseOrdersWithBundledQuantity">
+ 			</class>
+ 			<class name="com.jbilling.test.VerifyThatUserIsAbleToCreateMonthlyPrepaidOrder">	
+			</class>
+ 			<class name="com.jbilling.test.VerifyThatUserIsAbleToCreateMonthlyPostpaidOrder">
+			</class>
+			<class name="com.jbilling.test.VerifyThatUserIsAbleToCreateYearlyPostpaidOrder">
+			</class> 
+		</classes>
+	</test>
+</suite> 

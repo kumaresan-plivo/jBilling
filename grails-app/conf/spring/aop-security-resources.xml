@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:batch="http://www.springframework.org/schema/batch"
+	xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+	xsi:schemaLocation="http://www.springframework.org/schema/jdbc http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+		http://www.springframework.org/schema/batch http://www.springframework.org/schema/batch/spring-batch.xsd">
+		
+		  <!-- Security Advice for WebServicesSessionBean -->
+    <!-- If this jBilling installation is only used by one company and inside a secure on-premise installation,
+         TURN OFF security completely and get a performance boost.
+         To turn off, comment out both of the bean definitions below.
+     -->
+    <bean id="webServicesSecurityAdvice" class="com.sapienter.jbilling.server.security.WSSecurityAdvice">
+        <property name="securityValidator" ref="securityValidator" />
+    </bean>
+    <bean id="webServicesSecurityAdvisor" class="org.springframework.aop.support.RegexpMethodPointcutAdvisor">
+        <property name="advice" ref="webServicesSecurityAdvice"/>
+        <property name="pattern" value="com.sapienter.jbilling.server.util.IWebServicesSessionBean.*"/>
+        <property name="order" value="1" />
+    </bean>
+
+    <!-- Exception Advice for WebServicesSessionBean -->
+    <!-- Re-throws all exceptions as SessionInternalErrors. -->
+    <bean id="webServicesExceptionAdvice" class="com.sapienter.jbilling.server.util.WSExceptionAdvice"/>
+    <bean id="webServicesExceptionAdvisor" class="org.springframework.aop.support.RegexpMethodPointcutAdvisor">
+        <property name="advice" ref="webServicesExceptionAdvice"/>
+        <property name="pattern" value="com.sapienter.jbilling.server.util.WebServicesSessionSpringBean.*"/>
+        <property name="order" value="2" />
+    </bean>
+
+    <!-- Log Advice for WebServicesSessionBean -->
+    <!-- Logs entry and exit for all methods -->
+    <bean id="webServicesLogAdvice" class="com.sapienter.jbilling.server.util.api.APILogger"/>
+    <bean id="webServicesLogAdvisor" class="org.springframework.aop.support.RegexpMethodPointcutAdvisor">
+        <property name="advice" ref="webServicesLogAdvice"/>
+        <property name="pattern" value="com.sapienter.jbilling.server.util.WebServicesSessionSpringBean.*"/>
+        <property name="order" value="3" />
+    </bean>
+
+    <!-- Logs time for all methods -->
+    <bean id="stopWatchProto"
+          class="com.sapienter.jbilling.server.util.NanoStopWatch"
+          scope="prototype" lazy-init="true"/>
+    <bean id="stopWatch" class="org.springframework.aop.framework.ProxyFactoryBean">
+        <property name="targetSource">
+            <bean class="org.springframework.aop.target.ThreadLocalTargetSource">
+                <property name="targetBeanName" value="stopWatchProto"/>
+            </bean>
+        </property>
+    </bean>
+    <bean id="stopWatchAdvice"
+          class="com.sapienter.jbilling.server.util.api.APIStopWatchAspect">
+        <property name="stopWatch" ref="stopWatch"/>
+    </bean>
+    <bean id="stopWatchAdvisor" class="org.springframework.aop.support.RegexpMethodPointcutAdvisor">
+        <property name="advice" ref="stopWatchAdvice"/>
+        <property name="patterns">
+            <list>
+                <value>com.sapienter.jbilling.server.util.WebServicesSessionSpringBean.*</value>
+                <value>com.sapienter.jbilling.server.user.UserBL.*</value>
+                <value>com.sapienter.jbilling.server.order.OrderBL.*</value>
+                <value>com.sapienter.jbilling.server.invoice.InvoiceBL.*</value>
+                <value>com.sapienter.jbilling.server.payment.PaymentBL.*</value>
+            </list>
+        </property>
+        <property name="order" value="4" />
+    </bean>
+
+    <!-- Email Password Service -->
+    <bean id="passwordService"
+          class="com.sapienter.jbilling.server.util.credentials.EmailResetPasswordService"/>
+
+    <!--<bean id="testResetPasswordService"-->
+          <!--class="com.sapienter.jbilling.server.util.credentials.TestResetPasswordService"/>-->
+		
+</beans>

@@ -1,0 +1,10 @@
+<testdata>
+	<testdataset name="payInvoice" category="aa" testenv="develop|lab3">
+		<rowText>17</rowText>
+		<amount>5.00</amount>
+		<name>Ashish</name>
+		<number>4111111111111152</number>
+		<date>12/2020</date>
+		<order>2{RANDOMNUM}</order>
+	</testdataset>
+</testdata> 

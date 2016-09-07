@@ -1,0 +1,8 @@
+<testdata>
+	<testdataset name="addAgent" category="aa" testenv="develop|lab3">
+		<login>Agentsix{RANDOMNUM}</login>
+		<email>test@gmail.com</email>
+		<agent>Master</agent>
+		<commission>Invoice</commission>
+	</testdataset>
+</testdata> 

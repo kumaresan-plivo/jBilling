@@ -1,0 +1,58 @@
+7/18/2010 - jbilling-php-api-v2.1.1
+-----------------------------------
+* Added API call getPaperInvoicePDF()
+
+
+7/02/2010 - jbilling-php-api-v2.1
+---------------------------------
+* Added UserWS::ach
+* Added API call updateAch()
+* Added API calls getAuthPaymentType() and setAuthPaymentType()
+* Added API call createInvoiceFromOrder()
+
+
+9/18/2009 - jbilling-php-api-v2.0
+---------------------------------
+* License upgraded to GPL v3
+* Refactored jBillingAPI interface to be in alignment with jbilling 2.x
+* Renamed WSDLAPI to LegacyAPI (PEAR SOAP - jBilling 1.x API)
+* Created CXFAPI (Apache CXF API - jbilling 2.x API)
+* Created HessianAPI (not implemented - jbilling 2.x API)
+* Removed OrderLineWS::priceStr
+* Added ItemDTOEx::entityId
+* Added ItemDTOEx::hasDecimals
+* Created ItemPriceDTOEx
+* Added ContactWS::fieldNames
+* Added ContactWS::fieldValues
+* Added UserWS::balanceType
+* Added UserWS::blacklistMatches
+* Added UserWS::childIds
+* Added UserWS::creditLimit
+* Added UserWS::dynamicBalance
+* Added UserWS::mainOrderId
+* Added UserWS::owingBalance
+* Added UserWS::userIdBlackListed
+* Created ValidatePurchaseWS
+* Removed JavaDouble class (yay!) and its associations
+
+5/9/2009 - jbilling-php-api-v1.2b
+---------------------------------
+* Created JavaDouble class to solve issue with
+  PHP treating doubles and floats as the same data type
+* Refactored WSDLAPI::____toComplexDataType() to support
+  new JavaDouble data type
+* Created new OrderLineWS object which reflects
+  jbilling 1_1_2 OrderLineWS object
+* Added new jbilling 1_1_2 properties to OrderWS
+
+
+5/5/2009 - jbilling-php-api-v1.1
+--------------------------------
+* Added support for jbilling 1_1_2 api
+* ContactDTO updated to ContactWS
+* Added type casting to OrderLineWS properties
+* Refactored WSDLAPI::____toComplexDataType() and
+  added data type support for boolean, float, and
+  double.
+* Renamed iJbillingAPI interface to JbillingAPI
+* Updated INSTALL example usage

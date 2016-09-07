@@ -1,0 +1,19 @@
+<testdata>
+	<testdataset name="TC20_VerifyPayment" category="vp"
+		testenv="develop|lab3">
+		<chequeHolderName>test</chequeHolderName>
+		<chequeNumber>101010101010</chequeNumber>
+		<chequeDate>9/30/2016</chequeDate>
+		<paymentAmount>5</paymentAmount>
+		<PaymentOrder>5</PaymentOrder>
+	</testdataset>
+	
+	<testdataset name="TC102_addPaymentMethod" category="apm"
+		testenv="develop|lab">
+		<paymentTemplate>Payment Card</paymentTemplate>
+		<methodName>Card Pay{RANDOM}</methodName>
+		<allAccountTypes>true</allAccountTypes>
+		<isRecurring>true</isRecurring>
+	</testdataset>
+</testdata>
+

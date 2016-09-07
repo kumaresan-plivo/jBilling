@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="billing_register_summary" language="groovy" pageWidth="792" pageHeight="612" orientation="Landscape" whenNoDataType="AllSectionsNoDetail" columnWidth="752" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20">
+	<property name="ireport.zoom" value="2.0"/>
+	<property name="ireport.x" value="0"/>
+	<property name="ireport.y" value="0"/>
+	<parameter name="item_type_id" class="java.lang.Integer" isForPrompting="false">
+		<defaultValueExpression><![CDATA[null]]></defaultValueExpression>
+	</parameter>
+	<parameter name="division" class="java.lang.String" isForPrompting="false">
+		<defaultValueExpression><![CDATA[""]]></defaultValueExpression>
+	</parameter>
+	<parameter name="state" class="java.lang.String" isForPrompting="false">
+		<defaultValueExpression><![CDATA[""]]></defaultValueExpression>
+	</parameter>
+	<parameter name="item_id" class="java.lang.Integer" isForPrompting="false">
+		<defaultValueExpression><![CDATA[null]]></defaultValueExpression>
+	</parameter>
+	<parameter name="child_entities" class="java.util.List" isForPrompting="false"/>
+	<parameter name="itemTypeName" class="java.lang.String" isForPrompting="false"/>
+	<parameter name="itemName" class="java.lang.String" isForPrompting="false"/>
+	<parameter name="start_date" class="java.util.Date">
+		<defaultValueExpression><![CDATA[new java.util.Date(1001)]]></defaultValueExpression>
+	</parameter>
+	<parameter name="end_date" class="java.util.Date">
+		<defaultValueExpression><![CDATA[new java.util.Date(System.currentTimeMillis())]]></defaultValueExpression>
+	</parameter>
+	<parameter name="entityNames" class="java.lang.String" isForPrompting="false">
+		<defaultValueExpression><![CDATA["Test"]]></defaultValueExpression>
+	</parameter>
+	<queryString>
+		<![CDATA[select divval.string_value as division, stateval.string_value as state, e.description as entity, itt.description as item_type, itd.content as item, max(uom.uom) as uom, sum(il.amount) as amount, sum(il.quantity) as quantity, avg(il.price) as price
+from customer c join base_user u on u.id=c.user_id
+join entity e on e.id=u.entity_id and $X{IN,e.id,child_entities}
+join customer_account_info_type_timeline cait on cait.customer_id=c.id
+join meta_field_value stateval on stateval.id = cait.meta_field_value_id and (stateval.string_value = $P{state} or $P{state} = '')
+  join meta_field_name statemf on stateval.meta_field_name_id = statemf.id and lower(statemf.name)='state'
+join customer_account_info_type_timeline cait2 on cait2.customer_id=c.id
+join meta_field_value divval on divval.id = cait2.meta_field_value_id and (divval.string_value = $P{division} or $P{division} = '')
+  join meta_field_name divmf on divval.meta_field_name_id = divmf.id and lower(divmf.name)='division'
+join invoice i on i.user_id=c.user_id and (i.create_datetime >= $P{start_date}) and (i.create_datetime <= $P{end_date})
+join invoice_line il on il.invoice_id=i.id
+join item it on it.id = il.item_id and (it.id = $P{item_id} or $P{item_id} is null)
+join international_description itd on itd.foreign_id=it.id and itd.table_id=14 and itd.language_id=1 and itd.psudo_column='description'
+join item_type_map itm on itm.item_id=it.id
+join item_type itt on itt.id=itm.type_id and (itt.id = $P{item_type_id} or $P{item_type_id} is null)
+left join (
+  select uomit.id, uomval.string_value as uom
+  from item uomit
+  join item_meta_field_map uomimm on uomimm.item_id=uomit.id
+    join meta_field_value uomval on uomval.id = uomimm.meta_field_value_id
+    join meta_field_name uommf on uomval.meta_field_name_id = uommf.id and lower(uommf.name)='unit of measure'
+) as uom on uom.id=it.id
+group by division, state, entity, item_type, item
+order by division, state, entity, item_type, item;]]>
+	</queryString>
+	<field name="division" class="java.lang.String"/>
+	<field name="state" class="java.lang.String"/>
+	<field name="entity" class="java.lang.String"/>
+	<field name="item_type" class="java.lang.String"/>
+	<field name="item" class="java.lang.String"/>
+	<field name="uom" class="java.lang.String"/>
+	<field name="amount" class="java.math.BigDecimal"/>
+	<field name="quantity" class="java.math.BigDecimal"/>
+	<field name="price" class="java.math.BigDecimal"/>
+	<variable name="divisionTotal" class="java.math.BigDecimal" resetType="Group" resetGroup="divisionGroup" calculation="Sum">
+		<variableExpression><![CDATA[$F{amount}]]></variableExpression>
+		<initialValueExpression><![CDATA[java.math.BigDecimal.ZERO]]></initialValueExpression>
+	</variable>
+	<variable name="stateTotal" class="java.math.BigDecimal" resetType="Group" resetGroup="stateGroup" calculation="Sum">
+		<variableExpression><![CDATA[$F{amount}]]></variableExpression>
+		<initialValueExpression><![CDATA[java.math.BigDecimal.ZERO]]></initialValueExpression>
+	</variable>
+	<variable name="companyTotal" class="java.math.BigDecimal" resetType="Group" resetGroup="companyGroup" calculation="Sum">
+		<variableExpression><![CDATA[$F{amount}]]></variableExpression>
+		<initialValueExpression><![CDATA[java.math.BigDecimal.ZERO]]></initialValueExpression>
+	</variable>
+	<variable name="categoryTotal" class="java.math.BigDecimal" resetType="Group" resetGroup="categoryGroup" calculation="Sum">
+		<variableExpression><![CDATA[$F{amount}]]></variableExpression>
+		<initialValueExpression><![CDATA[java.math.BigDecimal.ZERO]]></initialValueExpression>
+	</variable>
+	<group name="divisionGroup">
+		<groupExpression><![CDATA[$F{division}]]></groupExpression>
+		<groupHeader>
+			<band height="22">
+				<textField>
+					<reportElement x="0" y="0" width="423" height="20"/>
+					<textElement>
+						<font fontName="SansSerif" size="12" isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Division: "+ ($F{division} == null ? "" : $F{division})]]></textFieldExpression>
+				</textField>
+				<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="###0.00" isBlankWhenNull="true">
+					<reportElement x="652" y="0" width="100" height="20"/>
+					<textElement/>
+					<textFieldExpression><![CDATA[$V{divisionTotal}]]></textFieldExpression>
+				</textField>
+				<line>
+					<reportElement x="0" y="20" width="752" height="1" forecolor="#CCCCCC"/>
+				</line>
+			</band>
+		</groupHeader>
+	</group>
+	<group name="stateGroup">
+		<groupExpression><![CDATA[$F{division} + $F{state}]]></groupExpression>
+		<groupHeader>
+			<band height="22">
+				<textField>
+					<reportElement x="0" y="0" width="423" height="20"/>
+					<textElement>
+						<font fontName="SansSerif" size="12" isBold="true" isItalic="false"/>
+					</textElement>
+					<textFieldExpression><![CDATA["  State: "+($F{state} == null ? "" : $F{state})
++ "  (" + ($F{division} == null ? "" : $F{division})+")"]]></textFieldExpression>
+				</textField>
+				<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="###0.00" isBlankWhenNull="true">
+					<reportElement x="652" y="0" width="100" height="20"/>
+					<textElement/>
+					<textFieldExpression><![CDATA[$V{stateTotal}]]></textFieldExpression>
+				</textField>
+				<line>
+					<reportElement x="0" y="20" width="752" height="1" forecolor="#CCCCCC"/>
+				</line>
+			</band>
+		</groupHeader>
+	</group>
+	<group name="companyGroup">
+		<groupExpression><![CDATA[$F{division} + $F{state} + $F{entity}]]></groupExpression>
+		<groupHeader>
+			<band height="21">
+				<textField>
+					<reportElement x="0" y="0" width="423" height="20"/>
+					<textElement>
+						<font fontName="SansSerif" size="12" isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["    LDC: "+($F{entity} == null ? "" : $F{entity}) + "  ("+
+($F{division} == null ? "" : ($F{division}+" - "))+
+($F{state} == null ? "" : $F{state}) + ")"]]></textFieldExpression>
+				</textField>
+				<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="###0.00" isBlankWhenNull="true">
+					<reportElement x="652" y="0" width="100" height="20"/>
+					<textElement/>
+					<textFieldExpression><![CDATA[$V{companyTotal}]]></textFieldExpression>
+				</textField>
+				<line>
+					<reportElement x="0" y="20" width="752" height="1" forecolor="#CCCCCC"/>
+				</line>
+			</band>
+		</groupHeader>
+	</group>
+	<group name="categoryGroup">
+		<groupExpression><![CDATA[$F{division} + $F{state} + $F{entity} + $F{item_type}]]></groupExpression>
+		<groupHeader>
+			<band height="50">
+				<textField>
+					<reportElement x="0" y="0" width="585" height="20"/>
+					<textElement>
+						<font fontName="SansSerif" size="12" isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["      Commodity: "+
+($F{item_type} == null ? "" : $F{item_type}) +"  ("+
+($F{division} == null ? "" : ($F{division}+" - "))+
+($F{state} == null ? "" : ($F{state}+" - "))+
+($F{entity} == null ? "" : $F{entity}) + ")"]]></textFieldExpression>
+				</textField>
+				<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="###0.00" isBlankWhenNull="true">
+					<reportElement x="652" y="0" width="100" height="20"/>
+					<textElement/>
+					<textFieldExpression><![CDATA[$V{categoryTotal}]]></textFieldExpression>
+				</textField>
+				<line>
+					<reportElement x="0" y="20" width="752" height="1" forecolor="#CCCCCC"/>
+				</line>
+				<textField isStretchWithOverflow="true">
+					<reportElement x="0" y="27" width="100" height="20" isPrintWhenDetailOverflows="true"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Product"]]></textFieldExpression>
+				</textField>
+				<textField isStretchWithOverflow="true">
+					<reportElement x="262" y="27" width="70" height="20" isPrintWhenDetailOverflows="true"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Bill Model"]]></textFieldExpression>
+				</textField>
+				<textField isStretchWithOverflow="true">
+					<reportElement x="332" y="27" width="70" height="20" isPrintWhenDetailOverflows="true"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["UoM"]]></textFieldExpression>
+				</textField>
+				<textField isStretchWithOverflow="true">
+					<reportElement x="402" y="21" width="60" height="26" isPrintWhenDetailOverflows="true"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Usage Volume"]]></textFieldExpression>
+				</textField>
+				<textField isStretchWithOverflow="true">
+					<reportElement x="472" y="27" width="70" height="20" isPrintWhenDetailOverflows="true"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Unit Price"]]></textFieldExpression>
+				</textField>
+				<textField>
+					<reportElement x="542" y="27" width="70" height="20"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Price"]]></textFieldExpression>
+				</textField>
+				<textField>
+					<reportElement x="612" y="21" width="70" height="26"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Gross Receipt Tax"]]></textFieldExpression>
+				</textField>
+				<textField>
+					<reportElement x="682" y="21" width="70" height="26"/>
+					<textElement>
+						<font isBold="true"/>
+					</textElement>
+					<textFieldExpression><![CDATA["Total Billings"]]></textFieldExpression>
+				</textField>
+				<line>
+					<reportElement x="0" y="47" width="752" height="1" forecolor="#CCCCCC"/>
+				</line>
+			</band>
+		</groupHeader>
+	</group>
+	<background>
+		<band splitType="Stretch"/>
+	</background>
+	<title>
+		<band height="70" splitType="Stretch">
+			<textField>
+				<reportElement x="0" y="0" width="200" height="20"/>
+				<textElement>
+					<font fontName="SansSerif" size="15" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["Summary Billing Register"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="512" y="0" width="73" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Executed on"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="dd-MMM-yyyy HH:mm" isBlankWhenNull="false">
+				<reportElement x="585" y="0" width="108" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[new Date()]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="0" y="20" width="90" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Invoices between"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="dd-MMM-yyyy    -" isBlankWhenNull="true">
+				<reportElement x="90" y="20" width="90" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$P{start_date}]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="dd-MMM-yyyy" isBlankWhenNull="true">
+				<reportElement x="180" y="20" width="90" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$P{end_date}]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="0" y="35" width="250" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Division: " +
+($P{division} != null && $P{division}.length() > 0 ? $P{division} : "All")]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="250" y="35" width="250" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["State: " +
+($P{state} != null && $P{state}.length() > 0 ? $P{state} : "All")]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="0" y="50" width="250" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Commodity: " +
+($P{itemTypeName} != null && $P{itemTypeName}.length() > 0 ? $P{itemTypeName} : "All")]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="250" y="50" width="250" height="15"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Product: " +
+($P{itemName} != null && $P{itemName}.length() > 0 ? $P{itemName} : "All")]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Group" evaluationGroup="divisionGroup" pattern="" isBlankWhenNull="true">
+				<reportElement x="500" y="35" width="250" height="30">
+					<printWhenExpression><![CDATA[$P{entityNames} != null && $P{entityNames}.length() > 0]]></printWhenExpression>
+				</reportElement>
+				<textElement/>
+				<textFieldExpression><![CDATA["LDC: " + $P{entityNames}]]></textFieldExpression>
+			</textField>
+		</band>
+	</title>
+	<columnHeader>
+		<band height="15" splitType="Stretch"/>
+	</columnHeader>
+	<detail>
+		<band height="22" splitType="Stretch">
+			<textField>
+				<reportElement x="0" y="0" width="250" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$F{item}]]></textFieldExpression>
+			</textField>
+			<textField pattern="###0.00">
+				<reportElement x="472" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$F{price}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="262" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Bill Model"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="682" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Total Billings"]]></textFieldExpression>
+			</textField>
+			<textField pattern="###0.00" isBlankWhenNull="true">
+				<reportElement x="402" y="0" width="70" height="20"/>
+				<textElement>
+					<font fontName="SansSerif"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{quantity}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="332" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$F{uom}]]></textFieldExpression>
+			</textField>
+			<line>
+				<reportElement x="0" y="20" width="752" height="1" forecolor="#CCCCCC"/>
+			</line>
+			<textField>
+				<reportElement x="612" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA["Gross Receipt Tax"]]></textFieldExpression>
+			</textField>
+			<textField pattern="###0.00">
+				<reportElement x="542" y="0" width="70" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[$F{amount}]]></textFieldExpression>
+			</textField>
+		</band>
+	</detail>
+	<pageFooter>
+		<band height="28" splitType="Stretch">
+			<textField>
+				<reportElement x="10" y="4" width="80" height="20"/>
+				<textElement textAlignment="Right"/>
+				<textFieldExpression><![CDATA["Page "+$V{PAGE_NUMBER}+" of"]]></textFieldExpression>
+			</textField>
+			<textField evaluationTime="Report">
+				<reportElement x="90" y="4" width="40" height="20"/>
+				<textElement/>
+				<textFieldExpression><![CDATA[" " + $V{PAGE_NUMBER}]]></textFieldExpression>
+			</textField>
+		</band>
+	</pageFooter>
+</jasperReport>

@@ -1,0 +1,2540 @@
+Index: src/java/com/sapienter/jbilling/server/order/OrderBL.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/order/OrderBL.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/order/OrderBL.java	(revision )
+@@ -4097,6 +4097,61 @@
+ 		OrderHelper.desynchronizeOrderLines(order);
+ 	}
+ 
++    /**
++     * This method is used to process Order Lines and set correct line prices
++     * based on the configured pricing models. This method is useful when re-rating Orders.
++     *
++     * @param order
++     * @param languageId
++     * @param entityId
++     * @param userId
++     * @param currencyId
++     * @param pricingFields
++     * @throws SessionInternalError
++     */
++    public void processWholeSaleLines(OrderDTO order, Integer languageId,
++                             Integer entityId, Integer userId, Integer currencyId,
++                             String pricingFields, Integer resellerEntityId) throws SessionInternalError {
++
++        OrderHelper.synchronizeOrderLines(order);
++
++        for (OrderLineDTO line : order.getLines()) {
++            LOG.debug("Processing line %s", line);
++
++            if (line.getUseItem()) {
++                List<PricingField> fields = pricingFields != null ? Arrays
++                        .asList(PricingField
++                                .getPricingFieldsValue(pricingFields)) : null;
++
++                ItemBL itemBl = new ItemBL(line.getItemId());
++                itemBl.setPricingFields(fields);
++
++                // get item with calculated price
++                ItemDTO item = itemBl.getWholeSaleDTO(languageId, userId, entityId,
++                        currencyId, line.getQuantity(), order, line, false, null, resellerEntityId);
++                LOG.debug("Populating line using item %s", item);
++
++                // set price or percentage from item
++                line.setPrice(item.getPrice() !=null ? item.getPrice(): BigDecimal.ZERO);
++
++                if (line.getAmount() == null) {
++                    line.setAmount(BigDecimal.ZERO);
++                }
++
++                if (line.getPrice() == null) {
++                    line.setPrice(BigDecimal.ZERO);
++                }
++
++                // set description and line type
++                line.setDescription(item.getDescription());
++                line.setTypeId(item.getOrderLineTypeId());
++            }
++        }
++
++        OrderHelper.desynchronizeOrderLines(order);
++    }
++
++
+     public void setProvisioningStatus(Integer orderLineId, Integer provisioningStatus) {
+         OrderLineDTO line = orderLineDAS.findForUpdate(orderLineId);
+         Integer oldStatus = line.getProvisioningStatusId();
+Index: src/java/com/sapienter/jbilling/server/user/demo/DemoEventHttpSender.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/user/demo/DemoEventHttpSender.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/user/demo/DemoEventHttpSender.java	(revision )
+@@ -101,7 +101,7 @@
+                 String assetIdentifierString = "";
+                 Set<AssetDTO> assets = orderChange.getAssets();
+                 if (assets.size() == 1) {
+-                    assetIdentifierString =  assets.iterator().next().getIdentifier();
++                    assetIdentifierString =  "\"" + assets.iterator().next().getIdentifier() + "\"";
+                 } else {
+                     assetIdentifierString += "[";
+                     for (AssetDTO asset: assets) {
+Index: descriptors/database/jbilling-upgrade-4.1.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- descriptors/database/jbilling-upgrade-4.1.xml	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ descriptors/database/jbilling-upgrade-4.1.xml	(revision )
+@@ -1481,4 +1481,31 @@
+             <column name="min_parameters" valueNumeric="0"/>
+         </insert>
+     </changeSet>
++    <changeSet id="WholeSalePricing" author="Marco Manzi">
++        <createTable tableName="entity_item_wholesale_price_map">
++            <column name="id" type="java.sql.Types.INTEGER">
++                <constraints nullable="false"/>
++            </column>
++            <column name="entity_id" type="java.sql.Types.INTEGER">
++                <constraints nullable="true"/>
++            </column>
++            <column name="item_id" type="java.sql.Types.INTEGER">
++                <constraints nullable="false"/>
++            </column>
++        </createTable>
++        <update tableName="jbilling_seqs">
++            <column name="next_id" valueComputed="(select max(p.id)+1 from entity_item_wholesale_price_map p)"/>
++            <where>name='entity_item_wholesale_price_map'</where>
++        </update>
++    </changeSet>
++    <changeSet id="WholeSalePricingSeq" author="Marco Manzi">
++        <insert tableName="jbilling_seqs">
++            <column name="name" value="entity_item_wholesale_price_map"/>
++            <column name="next_id" valueComputed="(select coalesce(max(id)+1,1) from entity_item_wholesale_price_map)"/>
++        </insert>
++    </changeSet>
++    <changeSet id="WholeSalePricingFKRemoval" author="Marco Manzi">
++        <dropForeignKeyConstraint baseTableName="item_price_timeline" constraintName="item_pm_map_model_map_id_fk"/>
++    </changeSet>
++
+ </databaseChangeLog>
+Index: src/java/com/sapienter/jbilling/server/item/db/ItemDTO.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/item/db/ItemDTO.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/item/db/ItemDTO.java	(revision )
+@@ -66,6 +66,7 @@
+     private String internalNumber;
+     private String glCode;
+     private Set<EntityItemPrice> defaultPrices = new HashSet<EntityItemPrice>();
++    private Set<EntityItemWholeSalePrice> defaultWholeSalePrices = new HashSet<EntityItemWholeSalePrice>();
+     private BigDecimal percentage;
+     private Set<ItemTypeDTO> excludedTypes = new HashSet<ItemTypeDTO>();
+     private Integer deleted;
+@@ -103,6 +104,7 @@
+     private Integer orderLineTypeId = null;
+     
+     private Integer priceModelCompanyId = null;
++    private Integer wholesalePriceModelCompanyId = null;
+     
+     private Date activeSince;
+     private Date activeUntil;
+@@ -239,7 +241,16 @@
+     public void setDefaultPrices(Set<EntityItemPrice> defaultPrices) {
+         this.defaultPrices = defaultPrices;
+     }
+-    
++
++    @OneToMany(fetch = FetchType.LAZY, mappedBy = "item", cascade = CascadeType.ALL, orphanRemoval = true)
++    public Set<EntityItemWholeSalePrice> getDefaultWholeSalePrices() {
++        return defaultWholeSalePrices;
++    }
++
++    public void setDefaultWholeSalePrices(Set<EntityItemWholeSalePrice> defaultWholeSalePrices) {
++        this.defaultWholeSalePrices= defaultWholeSalePrices;
++    }
++    
+     @Transient
+     public void setDefaultPricesByCompany(SortedMap<Date, PriceModelDTO> defaultPrices, CompanyDTO entity) {
+     	boolean updated = false;
+@@ -267,7 +278,35 @@
+     		this.defaultPrices.add(itemPrice);
+     	}
+     }
+-    
++
++    @Transient
++    public void setDefaultWholeSalePricesByCompany(SortedMap<Date, PriceModelDTO> defaultPrices, CompanyDTO entity) {
++        boolean updated = false;
++        if(this.defaultWholeSalePrices != null && this.defaultWholeSalePrices.size() > 0) {
++            for(EntityItemWholeSalePrice price : this.defaultWholeSalePrices) {
++                if(entity == null) {
++                    // prices are global, see if there already exist global price
++                    if(price.getEntity() == null) {
++                        price.setPrices(defaultPrices);
++                        updated = true;
++                    }
++                } else {
++                    //price is entity specfic, see if there exists price for that company
++                    if(price.getEntity() != null && price.getEntity().getId() == entity.getId()) {
++                        price.setPrices(defaultPrices);
++                        updated = true;
++                    }
++                }
++            }
++        }
++
++        // if prices have not been updated then create new entry
++        if(!updated) {
++            EntityItemWholeSalePrice itemPrice = new EntityItemWholeSalePrice(this, entity, defaultPrices);
++            this.defaultWholeSalePrices.add(itemPrice);
++        }
++    }
++    
+     /**
+      * Removes price for a given company. If company is null then global price is removed
+      * 
+@@ -296,7 +335,30 @@
+     		this.defaultPrices.remove(removed);
+     	}
+     }
++
+     /**
++     * Removes wholesale price for a given company. If company is null then global price is removed
++     *
++     * @param entity	:	CompanyDTO
++     */
++    @Transient
++    public void removeDefaultWholeSalePricesByCompany(CompanyDTO entity) {
++        EntityItemWholeSalePrice removed = null;
++        if(this.defaultWholeSalePrices != null && this.defaultWholeSalePrices.size() > 0) {
++            for(EntityItemWholeSalePrice price : this.defaultWholeSalePrices) {
++                //price is entity specfic, see if there exists price for that company
++                if(price.getEntity() != null && price.getEntity().getId() == entity.getId()) {
++                    removed = price;
++                }
++            }
++        }
++
++        if(removed != null) {
++            this.defaultWholeSalePrices.remove(removed);
++        }
++    }
++
++    /**
+      * This method looks up default prices by company id and if prices by company id are not found then
+      * return null
+      * 
+@@ -314,7 +376,27 @@
+         }
+         return null;
+     }
+-    
++
++    @Transient
++    public SortedMap<Date, PriceModelDTO> getDefaultWholeSalePricesByCompany (Integer entityId) {
++        for (EntityItemWholeSalePrice price : this.defaultWholeSalePrices) {
++            if (price != null && price.getEntity() != null && price.getEntity().getId() == entityId && price.getPrices() != null) {
++                return price.getPrices();
++            }
++        }
++        return null;
++    }
++
++    @Transient
++    public SortedMap<Date, PriceModelDTO> getDefaultWholeSalePricesWithoutCompany () {
++        for (EntityItemWholeSalePrice price : this.defaultWholeSalePrices) {
++            if (price != null) {
++                return price.getPrices();
++            }
++        }
++        return null;
++    }
++    
+     /**
+      * Get global price of item if global price is not found then returns null
+      * 
+@@ -348,9 +430,20 @@
+ 			prices = this.getGlobalDefaultPrices();
+ 		}
+ 		
+-		return PriceModelBL.getWS( (SortedMap<Date, PriceModelDTO>) prices);
++		return PriceModelBL.getWS((SortedMap<Date, PriceModelDTO>) prices);
+     }
+-    
++
++    /**
++     * Return wholesale prices sorted by date, of the requested entity.
++     * If the requested entityId is null, return the available global prices
++     * sorted by date.
++     *
++     * @return
++     */
++    @Transient
++    public SortedMap<Date, PriceModelWS> getWholeSalePricesForSelectedEntity(Integer entityId) {
++        return PriceModelBL.getWS((SortedMap<Date, PriceModelDTO>) getDefaultWholeSalePricesByCompany(entityId));
++    }
+ 
+     /**
+      * Adds a new price to the default pricing list. If no date is given, then the
+@@ -946,9 +1039,19 @@
+     @Transient
+ 	public void setPriceModelCompanyId(Integer priceModelCompanyId) {
+ 		this.priceModelCompanyId = priceModelCompanyId;
++	}
++
++    @Transient
++    public Integer getWholesalePriceModelCompanyId() {
++        return wholesalePriceModelCompanyId;
++    }
++
++    @Transient
++    public void setWholesalePriceModelCompanyId(Integer wholesalePriceModelCompanyId) {
++        this.wholesalePriceModelCompanyId = wholesalePriceModelCompanyId;
+-	}
++    }
+ 
+-	@Override
++    @Override
+     public String toString() {
+         return "ItemDTO: id=" + getId();
+     }
+Index: grails-app/conf/hibernate/hibernate.cfg.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/conf/hibernate/hibernate.cfg.xml	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ grails-app/conf/hibernate/hibernate.cfg.xml	(revision )
+@@ -92,6 +92,7 @@
+         <mapping class="com.sapienter.jbilling.server.item.db.AssetAssignmentDTO" />
+         <mapping class="com.sapienter.jbilling.server.item.db.AssetReservationDTO" />
+         <mapping class="com.sapienter.jbilling.server.item.db.EntityItemPrice" />
++        <mapping class="com.sapienter.jbilling.server.item.db.EntityItemWholeSalePrice" />
+         <mapping package="com.sapienter.jbilling.server.pricing.db" />
+         <mapping class="com.sapienter.jbilling.server.pricing.db.DataTableQueryDTO" />
+         <mapping class="com.sapienter.jbilling.server.pricing.db.DataTableQueryEntryDTO" />
+Index: src/java/com/sapienter/jbilling/server/item/ItemDTOEx.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/item/ItemDTOEx.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/item/ItemDTOEx.java	(revision )
+@@ -72,7 +72,9 @@
+     
+     // These prices are only entity specific or global
+     private SortedMap<Date, PriceModelWS> defaultPrices = new TreeMap<Date, PriceModelWS>();
++    private SortedMap<Date, PriceModelWS> defaultWholeSalePrices = new TreeMap<Date, PriceModelWS>();
+     private PriceModelWS defaultPrice;
++    private PriceModelWS defaultWholeSalePrice;
+ 
+     //@Size(min=1,max=50, message="validation.error.size,1,50")
+     private String description = null;
+@@ -99,6 +101,7 @@
+ 
+     private List<Integer> entities = new ArrayList<Integer>(0);
+     private Integer priceModelCompanyId = null;
++    private Integer wholeSalePriceModelCompanyId = null;
+     @Range(min = 0, max = 100, message = "validation.error.invalid.percentage.value")
+     private String standardPartnerPercentage;
+     @Range(min = 0, max = 100, message = "validation.error.invalid.percentage.value")
+@@ -384,6 +387,19 @@
+         return defaultPrices;
+     }
+ 
++    @XmlJavaTypeAdapter(CxfSMapDatePriceModelAdapter.class)
++    public SortedMap<Date, PriceModelWS> getDefaultWholeSalePrices() {
++        return defaultWholeSalePrices;
++    }
++
++    public void setDefaultWholeSalePrices(SortedMap<Date, PriceModelWS> defaultWholeSalePrices) {
++        this.defaultWholeSalePrices = defaultWholeSalePrices;
++    }
++
++    public void addDefaultWholeSalePrice(Date date, PriceModelWS model) {
++        this.defaultWholeSalePrices.put(date, model);
++    }
++
+     public void setDefaultPrices(SortedMap<Date, PriceModelWS> defaultPrices) {
+         this.defaultPrices = defaultPrices;
+     }
+@@ -400,6 +416,14 @@
+         this.defaultPrice = defaultPrice;
+     }
+ 
++    public PriceModelWS getDefaultWholeSalePrice() {
++        return defaultWholeSalePrice;
++    }
++
++    public void setDefaultWholeSalePrice(PriceModelWS defaultPrice) {
++        this.defaultWholeSalePrice = defaultPrice;
++    }
++
+ 	public MetaFieldValueWS[] getMetaFields() {
+         return metaFields;
+     }
+@@ -522,9 +546,17 @@
+ 
+ 	public void setPriceModelCompanyId(Integer priceModelCompanyId) {
+ 		this.priceModelCompanyId = priceModelCompanyId;
++	}
++
++    public Integer getWholeSalePriceModelCompanyId() {
++        return wholeSalePriceModelCompanyId;
++    }
++
++    public void setWholeSalePriceModelCompanyId(Integer wholeSalePriceModelCompanyId) {
++        this.wholeSalePriceModelCompanyId = wholeSalePriceModelCompanyId;
+-	}
++    }
+ 
+-	public boolean isGlobal() {
++    public boolean isGlobal() {
+ 		return global;
+ 	}
+ 
+Index: src/java/com/sapienter/jbilling/server/item/db/EntityItemWholeSalePrice.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/item/db/EntityItemWholeSalePrice.java	(revision )
++++ src/java/com/sapienter/jbilling/server/item/db/EntityItemWholeSalePrice.java	(revision )
+@@ -0,0 +1,97 @@
++/*
++ * JBILLING CONFIDENTIAL
++ * _____________________
++ *
++ * [2003] - [2012] Enterprise jBilling Software Ltd.
++ * All Rights Reserved.
++ *
++ * NOTICE:  All information contained herein is, and remains
++ * the property of Enterprise jBilling Software.
++ * The intellectual and technical concepts contained
++ * herein are proprietary to Enterprise jBilling Software
++ * and are protected by trade secret or copyright law.
++ * Dissemination of this information or reproduction of this material
++ * is strictly forbidden.
++ */
++package com.sapienter.jbilling.server.item.db;
++
++import com.sapienter.jbilling.server.pricing.db.PriceModelDTO;
++import com.sapienter.jbilling.server.user.db.CompanyDTO;
++import org.hibernate.annotations.*;
++import org.hibernate.annotations.MapKey;
++
++import javax.persistence.CascadeType;
++import javax.persistence.*;
++import javax.persistence.Entity;
++import javax.persistence.Table;
++import java.io.Serializable;
++import java.util.Date;
++import java.util.SortedMap;
++import java.util.TreeMap;
++
++@Entity
++@TableGenerator(
++        name = "entity_item_wholesale_price_map_GEN",
++        table = "jbilling_seqs",
++        pkColumnName = "name",
++        valueColumnName = "next_id",
++        pkColumnValue = "entity_item_wholesale_price_map",
++        allocationSize = 100
++)
++@Table(name = "entity_item_wholesale_price_map")
++public class EntityItemWholeSalePrice implements Serializable {
++
++	/**
++	 *
++	 */
++	private static final long serialVersionUID = -649387332758012893L;
++
++	@Id @GeneratedValue(strategy = GenerationType.TABLE, generator = "entity_item_wholesale_price_map_GEN")
++    @Column(name = "id", unique = true, nullable = false)
++	private int id;
++
++	@ManyToOne
++	@JoinColumn(name = "entity_id", nullable = true, updatable = false)
++	private CompanyDTO entity;
++
++	@ManyToOne
++	@JoinColumn(name = "item_id", nullable = false)
++	private ItemDTO item;
++
++	@Cascade(org.hibernate.annotations.CascadeType.DELETE_ORPHAN)
++	@OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
++	@MapKey(columns = @Column(name = "start_date", nullable = true))
++	@JoinTable(name = "item_price_timeline",
++		joinColumns = {@JoinColumn(name = "model_map_id", updatable = false)},
++		inverseJoinColumns = {@JoinColumn(name = "price_model_id", updatable = false)}
++	)
++	@Sort(type = SortType.NATURAL)
++	@Fetch(FetchMode.SELECT)
++	private SortedMap<Date, PriceModelDTO> prices = new TreeMap<Date, PriceModelDTO>();
++
++	public EntityItemWholeSalePrice() {}
++
++	public EntityItemWholeSalePrice(ItemDTO item, CompanyDTO entity, SortedMap<Date, PriceModelDTO> prices) {
++		this.item = item;
++		this.entity = entity;
++		this.prices = prices;
++	}
++	
++	public ItemDTO getItem () {
++		return this.item;
++	}
++	
++	public CompanyDTO getEntity () {
++		return this.entity;
++	}
++	
++    public SortedMap<Date, PriceModelDTO> getPrices() {
++        return prices;
++    }
++
++    public void setPrices(SortedMap<Date, PriceModelDTO> defaultPrices) {
++        this.prices = defaultPrices;
++    }
++}
++
++
+Index: grails-app/views/product/editProduct.gsp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/views/product/editProduct.gsp	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ grails-app/views/product/editProduct.gsp	(revision )
+@@ -259,19 +259,19 @@
+        }
+     </r:script>
+     <script type="text/javascript">
+-    var categoryAsstMan = {
+-            <g:each in="${categories}" var="category" status="catIdx">
+-            <g:if test="${catIdx > 0}">,</g:if>${category.id}: Boolean(${category.allowAssetManagement == 1 ? '1' : '0'})
+-    </g:each>
+-    };
+-    var isCategoryGlobal = {
+-            <g:each in="${categories}" var = "cat" status="catIds">
+-            <g:if test="${catIds > 0}">, </g:if>${cat.id}:
+-    Boolean(${cat.global ? '1' : 0})
+-    </g:each>
+-    }
+-    ;
+-</script>
++        var categoryAsstMan = {
++                <g:each in="${categories}" var="category" status="catIdx">
++                <g:if test="${catIdx > 0}">,</g:if>${category.id}: Boolean(${category.allowAssetManagement == 1 ? '1' : '0'})
++        </g:each>
++        };
++        var isCategoryGlobal = {
++                <g:each in="${categories}" var = "cat" status="catIds">
++                <g:if test="${catIds > 0}">, </g:if>${cat.id}:
++        Boolean(${cat.global ? '1' : 0})
++        </g:each>
++        }
++        ;
++    </script>
+ </head>
+ <body>
+ 
+@@ -308,12 +308,12 @@
+ 
+                         <g:render template="/product/descriptions" model="[product: product]"/>
+ 
+-						<g:applyLayout name="form/checkbox">
++                        <g:applyLayout name="form/checkbox">
+                             <content tag="label"><g:message code="product.allow.decimal.quantity"/></content>
+                             <content tag="label.for">product.hasDecimals</content>
+                             <g:checkBox class="cb checkbox" name="product.hasDecimals" checked="${product?.hasDecimals > 0}"/>
+                         </g:applyLayout>
+-                        
++
+                         <g:applyLayout name="form/checkbox">
+                             <content tag="label"><g:message code="product.standardAvailability"/></content>
+                             <content tag="label.for">product.standardAvailability</content>
+@@ -342,51 +342,51 @@
+                         </div>
+ 
+                         <div id="globalEnabledDiv" class="${!isCategoryGlobal ? 'hide-element' : ''}">
+-						<g:if test="${isNewProduct || showEntityListAndGlobal}">            
+-                        	<g:isGlobal>
+-                        		<g:applyLayout name="form/checkbox">
+-                            		<content tag="label"><g:message code="product.assign.global"/></content>
+-                            		<content tag="label.for">global-checkbox</content>
+-                            		<g:checkBox id="global-checkbox" 
+-                            					onClick="hideCompanies()"
+-                                                class="cb checkbox ${!isCategoryGlobal ? 'hide-element' : ''}" name="product.global"
+-                                                checked="${product?.global}" />
+-                        		</g:applyLayout>
+-                        	</g:isGlobal>
+-                        	<g:isNotRoot>
+-                        		<g:hiddenField name="product.global" value="${product?.global}"/>
+-                        	</g:isNotRoot>
+-                        </g:if>
++                            <g:if test="${isNewProduct || showEntityListAndGlobal}">
++                                <g:isGlobal>
++                                    <g:applyLayout name="form/checkbox">
++                                        <content tag="label"><g:message code="product.assign.global"/></content>
++                                        <content tag="label.for">global-checkbox</content>
++                                        <g:checkBox id="global-checkbox"
++                                                    onClick="hideCompanies()"
++                                                    class="cb checkbox ${!isCategoryGlobal ? 'hide-element' : ''}" name="product.global"
++                                                    checked="${product?.global}" />
++                                    </g:applyLayout>
++                                </g:isGlobal>
++                                <g:isNotRoot>
++                                    <g:hiddenField name="product.global" value="${product?.global}"/>
++                                </g:isNotRoot>
++                            </g:if>
+                         </div>
+ 
+-                        <div id="childCompanies">          
+-                       		<g:isRoot>
+-                       			<g:applyLayout name="form/select">
+-                           			<content tag="label"><g:message code="product.assign.entities"/><span id="mandatory-meta-field">*</span></content>
+-                           			<content tag="label.for">product.entities</content>
+-                           			<g:select id="company-select" multiple="multiple" name="product.entities" from="${allCompanies}"
+-                                   			  optionKey="id" optionValue="${{it?.description}}"
+-                           	    	    	  value="${allCompanies.size == 1 ? allCompanies?.id : entities}"
+-                           	    	    	  onChange="${remoteFunction(action: 'retrieveMetaFields',
+-                  										  update: 'product-metafields',
+-                  										  params: '\'entities=\' + getSelectValues(this)')}"/>
+-                        		</g:applyLayout>
+-                        	</g:isRoot>
+-                        	<g:isNotRoot>
+-                        		<g:if test="${product?.entities?.size()>0}">
++                        <div id="childCompanies">
++                            <g:isRoot>
++                                <g:applyLayout name="form/select">
++                                    <content tag="label"><g:message code="product.assign.entities"/><span id="mandatory-meta-field">*</span></content>
++                                    <content tag="label.for">product.entities</content>
++                                    <g:select id="company-select" multiple="multiple" name="product.entities" from="${allCompanies}"
++                                              optionKey="id" optionValue="${{it?.description}}"
++                                              value="${allCompanies.size == 1 ? allCompanies?.id : entities}"
++                                              onChange="${remoteFunction(action: 'retrieveMetaFields',
++                                                      update: 'product-metafields',
++                                                      params: '\'entities=\' + getSelectValues(this)')}"/>
++                                </g:applyLayout>
++                            </g:isRoot>
++                            <g:isNotRoot>
++                                <g:if test="${product?.entities?.size()>0}">
+                                     <g:each in="${product?.entities}">
+                                         <g:hiddenField name="product.entities" value="${it}"/>
+                                     </g:each>
+-                        		</g:if>
+-                        		<g:else>
+-                        				<g:hiddenField name="product.entities" value="${session['company_id']}"/>
+-								</g:else>
+-                        	</g:isNotRoot>
++                                </g:if>
++                                <g:else>
++                                    <g:hiddenField name="product.entities" value="${session['company_id']}"/>
++                                </g:else>
++                            </g:isNotRoot>
+                         </div>
+ 
+                         <!-- meta fields -->
+                         <div id="product-metafields">
+-                        	<g:render template="/metaFields/editMetaFields" model="[availableFields: availableFields, fieldValues: product?.metaFields]"/>
++                            <g:render template="/metaFields/editMetaFields" model="[availableFields: availableFields, fieldValues: product?.metaFields]"/>
+                         </div>
+                     </div>
+ 
+@@ -441,18 +441,18 @@
+                                       optionValue="description"
+                                       value="${types}"/>
+                         </g:applyLayout>
+-                        
++
+                         <g:applyLayout name="form/date">
+-			                <content tag="label"><g:message code="product.detail.availability.start.date"/></content>
+-			                <content tag="label.for">product.activeSince</content>
+-			                <g:textField class="field" name="product.activeSince" value="${formatDate(date: product?.activeSince, formatName: 'datepicker.format')}"/>
+-			            </g:applyLayout>
+-			
+-			            <g:applyLayout name="form/date">
+-			                <content tag="label"><g:message code="product.detail.availability.end.date"/></content>
+-			                <content tag="label.for">product.activeUntil</content>
+-			                <g:textField class="field" name="product.activeUntil" value="${formatDate(date: product?.activeUntil, formatName: 'datepicker.format')}"/>
+-			            </g:applyLayout>
++                            <content tag="label"><g:message code="product.detail.availability.start.date"/></content>
++                            <content tag="label.for">product.activeSince</content>
++                            <g:textField class="field" name="product.activeSince" value="${formatDate(date: product?.activeSince, formatName: 'datepicker.format')}"/>
++                        </g:applyLayout>
++
++                        <g:applyLayout name="form/date">
++                            <content tag="label"><g:message code="product.detail.availability.end.date"/></content>
++                            <content tag="label.for">product.activeUntil</content>
++                            <g:textField class="field" name="product.activeUntil" value="${formatDate(date: product?.activeUntil, formatName: 'datepicker.format')}"/>
++                        </g:applyLayout>
+ 
+                         <div id="assetReservationDuration">
+                             <g:applyLayout name="form/input">
+@@ -483,17 +483,34 @@
+                     </div>
+                 </div>
+ 
++
++                <g:if test="${product?.id &&
++                        (product.isGlobal() || (product.entities != null && product.entities.size() > 1))}">
++                    <!-- wholesale pricing controls -->
++                    <div id="wholesale-pricihg" class="box-cards box-cards-open">
++                        <div class="box-cards-title">
++                            <a class="btn-open" href="#"><span><g:message code="product.wholesale.prices"/></span></a>
++                        </div>
++                        <div class="box-card-hold">
++                            <g:set var="startDate" value="${CommonConstants.EPOCH_DATE}"/>
++                            <g:render template="/priceModel/wholesale-model" model="[
++                                    product: product, models: defaultWholeSalePrices,
++                                    startDate: startDate, priceModelData: wholeSalePriceModelData]"/>
++                        </div>
++                    </div>
++                </g:if>
++
+-                <!-- dependencies controls -->
++            <!-- dependencies controls -->
+                 <div id="dependency" class="box-cards">
+                     <div class="box-cards-title">
+                         <a class="btn-open" href="#"><span><g:message code="product.dependencies"/></span></a>
+                     </div>
+                     <div class="box-card-hold">
+                         <g:render template="dependencies" model="[selectedProduct: product,
+-                                dependencyItemTypes : dependencyItemTypes,
+-                                dependencyItems: dependencyItems,
+-                                dependentTypes: dependentTypes,
+-                                dependentItems: dependentItems]" />
++                                                                  dependencyItemTypes : dependencyItemTypes,
++                                                                  dependencyItems: dependencyItems,
++                                                                  dependentTypes: dependentTypes,
++                                                                  dependentItems: dependentItems]" />
+                     </div>
+                 </div>
+ 
+@@ -508,26 +525,26 @@
+                         <%-- buttons to add empty meta field or from templates  class="type-metafield-menu" --%>
+                         <div class="type-metafield-header">
+ 
+-                        <div class="btn-row">
+-                            <span class="type-metafield-menu">
++                            <div class="btn-row">
++                                <span class="type-metafield-menu">
+ 
+-                                <label for="metaFieldTemplate.id"><g:message
+-                                        code="product.orderLineMetafields.import"/></label>
+-                                <g:select name="metaFieldTemplate.id" id="metaFieldTemplate-id" class="field"
+-                                          from="${new MetaFieldDAS().getAvailableFields(session['company_id'], [EntityType.ORDER_LINE] as EntityType[], true).findAll {it.isDisabled()==false}}"
+-                                          optionKey="id"
+-                                          optionValue="name"/>
++                                    <label for="metaFieldTemplate.id"><g:message
++                                            code="product.orderLineMetafields.import"/></label>
++                                    <g:select name="metaFieldTemplate.id" id="metaFieldTemplate-id" class="field"
++                                              from="${new MetaFieldDAS().getAvailableFields(session['company_id'], [EntityType.ORDER_LINE] as EntityType[], true).findAll {it.isDisabled()==false}}"
++                                              optionKey="id"
++                                              optionValue="name"/>
+ 
+-                                <a onclick="${remoteFunction(action: 'populateProductOrderLineMetaFieldForEdit',
+-                                        update: [success: 'meta-field-load-target', failure: 'meta-field-load-target'],
+-                                        onComplete: 'moveMetaFieldsFromTemplate()',
+-                                        params: '\'mfId=\' + $(\'#metaFieldTemplate-id\').val() + \'&startIdx=\' + (metaFieldIdx+1) + \'&entityType=' + EntityType.ORDER_LINE + '\'')}">
+-                                    <img src="${resource(dir: 'images', file: 'add.png')}" alt="add"/>
+-                                </a>
+-                            </span>
++                                    <a onclick="${remoteFunction(action: 'populateProductOrderLineMetaFieldForEdit',
++                                            update: [success: 'meta-field-load-target', failure: 'meta-field-load-target'],
++                                            onComplete: 'moveMetaFieldsFromTemplate()',
++                                            params: '\'mfId=\' + $(\'#metaFieldTemplate-id\').val() + \'&startIdx=\' + (metaFieldIdx+1) + \'&entityType=' + EntityType.ORDER_LINE + '\'')}">
++                                        <img src="${resource(dir: 'images', file: 'add.png')}" alt="add"/>
++                                    </a>
++                                </span>
+ 
+-                            <a onclick="addMetaField();" class="submit add" style="width: 150px;"><span><g:message code="button.add.new.metaField"/></span></a>
+-                        </div>
++                                <a onclick="addMetaField();" class="submit add" style="width: 150px;"><span><g:message code="button.add.new.metaField"/></span></a>
++                            </div>
+                         </div>
+ 
+                         <div>
+@@ -548,7 +565,7 @@
+ 
+                 <div class="buttons">
+                     <ul>
+-                        <li><a onclick="$('#save-product-form').submit();" class="submit save"><span><g:message code="button.save"/></span></a></li>
++                        <li><a onclick="deleteWholeSalePrices();$('#save-product-form').submit();" class="submit save"><span><g:message code="button.save"/></span></a></li>
+                         <li>
+                             <g:settingEnabled property="hbase.audit.logging">
+                                 <g:if test="${!isNewProduct}">
+@@ -565,7 +582,7 @@
+             </fieldset>
+         </g:form>
+ 
+-        <%-- meta fields from groups or already created ones are loaded here before being moved into the list --%>
++    <%-- meta fields from groups or already created ones are loaded here before being moved into the list --%>
+         <div id="meta-field-load-target" style="display: none">
+         </div>
+ 
+@@ -582,37 +599,37 @@
+                 <% params.entityType = com.sapienter.jbilling.server.metafields.EntityType.PRODUCT.name(); %>
+                 <div class="box">
+                     <g:render template="/metaFields/editMetafield"
+-                               model="[metaField: new MetaFieldWS(), entityType: EntityType.PRODUCT,
+-                                       parentId: '', metaFieldIdx: '_mfIdx_', displayMetaFieldType: false]"/>
++                              model="[metaField: new MetaFieldWS(), entityType: EntityType.PRODUCT,
++                                      parentId: '', metaFieldIdx: '_mfIdx_', displayMetaFieldType: false]"/>
+                 </div>
+                 <div class="btn-row">
+                     <a class="submit save" onclick="$('#line-_mfIdx_').trigger('click');"><span><g:message
+                             code="button.update"/></span></a>
+                     <a class="submit cancel" onclick="$('#line-_mfIdx_').remove();
+-                                        $('#line-_mfIdx_-editor').remove();"><span><g:message
+-                                                code="button.remove"/></span></a>
++                    $('#line-_mfIdx_-editor').remove();"><span><g:message
++                            code="button.remove"/></span></a>
+                 </div>
+             </li>
+ 
+         </div>
+     </div>
+-	<div id="refresh-price-dialog" class="ui-dialog-title">
+-    	<div id="impersonation-text"><g:message code="product.discard.company.prices"/></div>
+-    	<div>
++    <div id="refresh-price-dialog" class="ui-dialog-title">
++        <div id="impersonation-text"><g:message code="product.discard.company.prices"/></div>
++        <div>
+             <br/>&nbsp;
+         </div>
+-    	<div class="buttons">
+-    		<ul>
+-    			<li><a onclick="forceRefreshPrice()" class="submit select"><span><g:message code="prompt.yes"/></span></a></li>
+-    			<li><a onclick="$('#refresh-price-dialog').dialog('close'); document.getElementById('product.priceModelCompanyId').value = document.getElementById('priceModelCompanyId').value;" class="submit select"><span><g:message code="prompt.no"/></span></a></li>
+-    		</ul>
+-    	</div>
+-	</div>
+-	
++        <div class="buttons">
++            <ul>
++                <li><a onclick="forceRefreshPrice()" class="submit select"><span><g:message code="prompt.yes"/></span></a></li>
++                <li><a onclick="$('#refresh-price-dialog').dialog('close'); document.getElementById('product.priceModelCompanyId').value = document.getElementById('priceModelCompanyId').value;" class="submit select"><span><g:message code="prompt.no"/></span></a></li>
++            </ul>
++        </div>
++    </div>
++
+ </div>
+ </body>
+ <r:script>
+-
++    var priceModelToChange = '#priceModel';
+ 	$(document).ready(function () {
+ 	    	if('${subscriptionCategory}'  == 'true') {
+         		$('#assetManagementEnabled').prop('checked',true);
+@@ -630,7 +647,7 @@
+                 }
+             });
+ 	});
+-    <%-- move meta fields loaded from template to the list of editable meta fields--%>
++<%-- move meta fields loaded from template to the list of editable meta fields--%>
+     function moveMetaFieldsFromTemplate() {
+         var metaFields = $("#meta-field-load-target").children().detach();
+         metaFieldIdx += metaFields.length;
+@@ -639,21 +656,21 @@
+ 
+     var metaFieldIdx = ${1 + (orderLineMetaFields != null ? product.orderLineMetaFields.size() : 0)};
+ 
+-    <%-- Add a new empty meta field line to the table --%>
++<%-- Add a new empty meta field line to the table --%>
+     function addMetaField() {
+         metaFieldIdx ++;
+-        <%-- Clone the template --%>
+-        var template = $("#meta-field-template").clone().html().replace(/_mfIdx_/g, metaFieldIdx);
+-        $("#orderLine-metafield-lines").append(template);
++<%-- Clone the template --%>
++    var template = $("#meta-field-template").clone().html().replace(/_mfIdx_/g, metaFieldIdx);
++    $("#orderLine-metafield-lines").append(template);
+ 
+ 
+-        <%-- Display the correct input depending if the type is list or enumeration --%>
+-        $('#metaField'+metaFieldIdx+'\\.dataType').change(function () {
+-            var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 9);
+-            $('#metaField-header-datatype-'+idx).html($(this).val());
++<%-- Display the correct input depending if the type is list or enumeration --%>
++    $('#metaField'+metaFieldIdx+'\\.dataType').change(function () {
++        var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 9);
++        $('#metaField-header-datatype-'+idx).html($(this).val());
+ 
+-            var visibleFieldId;
+-            if ($(this).val() == '${DataType.ENUMERATION}' || $(this).val() == '${DataType.LIST}') {
++        var visibleFieldId;
++        if ($(this).val() == '${DataType.ENUMERATION}' || $(this).val() == '${DataType.LIST}') {
+                 $('#field-name'+idx).hide().find('input').prop('disabled', 'true');
+                 $('#field-enumeration'+idx).show().find('select').prop('disabled', '');
+                 $('#field-filename'+idx).hide().find('input').prop('disabled', 'true')
+@@ -676,34 +693,34 @@
+             $('#metaField-header-desc-'+idx).html(newName)
+         }).change();
+ 
+-        <%-- Set the header to the name of the meta field --%>
+-        $('#metaField'+metaFieldIdx+'\\.name').change(function () {
+-            var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 5);
+-            $('#metaField-header-desc-'+idx).html($(this).val())
+-        });
++<%-- Set the header to the name of the meta field --%>
++    $('#metaField'+metaFieldIdx+'\\.name').change(function () {
++        var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 5);
++        $('#metaField-header-desc-'+idx).html($(this).val())
++    });
+ 
+-        <%-- Set mandatory depending on the checkbox--%>
+-        $('#metaField'+metaFieldIdx+'\\.mandatory').change(function () {
+-            var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 10);
+-            $('#metaField-header-mandatory-'+idx).html($(this).is(':checked')
+-                                ? '<g:message code="product.orderLineMetafields.isMandatory"/>'
++<%-- Set mandatory depending on the checkbox--%>
++    $('#metaField'+metaFieldIdx+'\\.mandatory').change(function () {
++        var idx = $(this).prop('id').substring(9, $(this).prop('id').length - 10);
++        $('#metaField-header-mandatory-'+idx).html($(this).is(':checked')
++                            ? '<g:message code="product.orderLineMetafields.isMandatory"/>'
+                                 : '<g:message code="product.orderLineMetafields.notMandatory"/>')
+         });
+ 
+-        <%-- enable drop down effect when user clicks on a row header --%>
+-        $('#line-'+metaFieldIdx).click(function() {
+-            var id = $(this).attr('id');
+-            $('#' + id).toggleClass('active');
+-            $('#' + id + '-editor').toggle('blind');
+-        });
+-    }
+-    
+-  	function refreshChainModel() {
+-       	$.ajax({
+-        	type: 'POST',
+-            url: '${createLink(action: 'refreshChainModel')}',
++<%-- enable drop down effect when user clicks on a row header --%>
++    $('#line-'+metaFieldIdx).click(function() {
++        var id = $(this).attr('id');
++        $('#' + id).toggleClass('active');
++        $('#' + id + '-editor').toggle('blind');
++    });
++}
++
++  function refreshChainModel() {
++       $.ajax({
++        type: 'POST',
++        url: '${createLink(action: 'refreshChainModel')}',
+-            data: $('#priceModel').parents('form').serialize(),
+-            success: function(data) { $('#priceModel').replaceWith(data); },
++            data: $(priceModelToChange).parents('form').serialize(),
++            success: function(data) { $(priceModelToChange).replaceWith(data); },
+             error: function(data) { showRefreshDialog(); }
+        	});
+   	}
+@@ -713,6 +730,7 @@
+     }
+     
+     function forceRefreshPrice() {
++
+     	document.getElementById('forceRefreshModel').value = 1;
+     	refreshChainModel();
+     	$( "#refresh-price-dialog" ).dialog( "close" );
+@@ -723,8 +741,16 @@
+             autoOpen: false,
+             height: 140,
+             width: 420,
+-            modal: true,
++            modal: true
+         });
+     });
++
++    function deleteWholeSalePrices() {
++            $('#priceModel :input').attr('disabled', false);
++            $('#wholesale-priceModel :input').attr('disabled', true);
++            priceModelToChange = '#priceModel';
++//            $('#wholesale-pricihg').removeClass('box-cards-open');
++//            $('#wholesale-priceModel').remove();
++        }
+ </r:script>
+ </html>
+Index: grails-app/i18n/messages.properties
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/i18n/messages.properties	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ grails-app/i18n/messages.properties	(revision )
+@@ -1999,6 +1999,7 @@
+ product.excludedCategories=Excluded Categories
+ product.type=Product Category
+ product.prices=Prices
++product.wholesale.prices=Whole Sale Prices
+ product.orderLineMetafields.description=Order meta fields
+ product.orderLineMetafields.import=Import Meta Fields
+ product.orderLineMetafields.isMandatory=Mandatory
+\ No newline at end of file
+Index: grails-app/controllers/jbilling/ProductController.groovy
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/controllers/jbilling/ProductController.groovy	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ grails-app/controllers/jbilling/ProductController.groovy	(revision )
+@@ -1675,7 +1675,10 @@
+         Integer assetReservationDefaultValue = PreferenceBL.getPreferenceValue(session['company_id'] as int, CommonConstants.PREFERENCE_ASSET_RESERVATION_DURATION) as int
+ 
+         [product: product, currencies: retrieveCurrencies(), categories: categories, categoryId: params.int('category'),
+-                availableFields: availableFields, defaultPrices : product?.defaultPrices, priceModelData: priceModel ? initPriceModelData(priceModel) : null,
++                availableFields: availableFields, defaultPrices : product?.defaultPrices,
++                priceModelData: priceModel ? initPriceModelData(priceModel) : null,
++                defaultWholeSalePrices: product?.defaultWholeSalePrices,
++                wholeSalePriceModelData: initPriceModelData(product?.defaultWholeSalePrice),
+                 dependencyItemTypes: getDependencyItemTypes(excludedItemTypeIds), dependencyItems: null,
+                 dependentTypes: product?.getDependenciesOfType(ItemDependencyType.ITEM_TYPE),
+                 dependentItems: product?.getDependenciesOfType(ItemDependencyType.ITEM),
+@@ -1772,147 +1775,260 @@
+     }
+ 
+     def updateStrategy () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
+         def priceModel = PlanHelper.bindPriceModel(params)
+         priceModel?.attributes = null;
+ 
+ 		// Keep default prices of selected company
++        if (wholesale) {
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getDefaultWholeSalePricesByCompany(entityId)
++            }
++
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++            product.defaultWholeSalePrices = defaultPrices
++            def startDate = params.startDate ? DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate() : null;
++            render template: '/priceModel/wholesale-model',
++                    model: [ model: priceModel, startDate: startDate, models: product?.defaultWholeSalePrices,
++                             currencies: retrieveCurrencies(),allCompanies : retrieveCompanies(), priceModelData: initPriceModelData(priceModel), product : product]
++        } else {
+-		def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
+-		product.defaultPrices = defaultPrices
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
++            product.defaultPrices = defaultPrices
+-
+-		def startDate = params.startDate ? DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate() : null;
+-        render template: '/priceModel/model',
+-		model: [ model: priceModel, startDate: startDate, models: product?.defaultPrices,
+-				 currencies: retrieveCurrencies(),allCompanies : retrieveCompanies(), priceModelData: initPriceModelData(priceModel), product : product]
++            def startDate = params.startDate ? DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate() : null;
++            render template: '/priceModel/model',
++                    model: [ model: priceModel, startDate: startDate, models: product?.defaultPrices,
++                             currencies: retrieveCurrencies(),allCompanies : retrieveCompanies(), priceModelData: initPriceModelData(priceModel), product : product]
+-		
+-    }
++        }
++    }
+ 
+     def addChainModel () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
++        if (wholesale) {
+-        // Keep default prices of selected company
++            // Keep default prices of selected company
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getDefaultWholeSalePricesByCompany(entityId)
++            }
++
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++
++            def priceModel = PlanHelper.bindPriceModel(params)
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++
++            // add new price model to end of chain
++            def model = priceModel
++            while (model.next) {
++                model = model.next
++            }
++            model.next = new PriceModelWS();
++
++            render template: '/priceModel/wholesale-model',
++                    model: [ model: priceModel, startDate: startDate, models: defaultPrices,
++                             currencies: retrieveCurrencies(), product : product, allCompanies : retrieveCompanies(),
++                             priceModelData: priceModel ? setPriceModelData(priceModel) : null ]
++        } else {
++            // Keep default prices of selected company
+-		def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
+ 
+-        def priceModel = PlanHelper.bindPriceModel(params)
+-        def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++            def priceModel = PlanHelper.bindPriceModel(params)
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
+ 
+-        // add new price model to end of chain
+-        def model = priceModel
+-        while (model.next) {
+-            model = model.next
+-        }
+-        model.next = new PriceModelWS();
++            // add new price model to end of chain
++            def model = priceModel
++            while (model.next) {
++                model = model.next
++            }
++            model.next = new PriceModelWS();
+ 
+-        render template: '/priceModel/model', 
+-				  model: [ model: priceModel, startDate: startDate, models: defaultPrices, 
+-						   currencies: retrieveCurrencies(), product : product, allCompanies : retrieveCompanies(), 
+-						   priceModelData: priceModel ? setPriceModelData(priceModel) : null ]
+-    }
++            render template: '/priceModel/model',
++                    model: [ model: priceModel, startDate: startDate, models: defaultPrices,
++                             currencies: retrieveCurrencies(), product : product, allCompanies : retrieveCompanies(),
++                             priceModelData: priceModel ? setPriceModelData(priceModel) : null ]
++        }
++    }
+ 
+     def removeChainModel () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
++        if (wholesale) {
++            // Keep default prices of selected company
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
+-		
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getDefaultWholeSalePricesByCompany(entityId)
++            }
++
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++
++            def priceModel = PlanHelper.bindPriceModel(params)
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++
++            def modelIndex = params.int('modelIndex')
++
++            // remove price model from the chain
++            def model = priceModel
++            for (int i = 1; model != null; i++) {
++                if (i == modelIndex) {
++                    model.next = model.next?.next
++                    break
++                }
++                model = model.next
++            }
++
++            render template: '/priceModel/wholesale-model',
++                    model: [ model: priceModel, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product,
++                             priceModelData: priceModel ? setPriceModelData(priceModel) : null  ]
++        } else {
+-        // Keep default prices of selected company
+-		def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            // Keep default prices of selected company
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
+ 
+-        def priceModel = PlanHelper.bindPriceModel(params)
+-        def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++            def priceModel = PlanHelper.bindPriceModel(params)
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
+ 
+-        def modelIndex = params.int('modelIndex')
++            def modelIndex = params.int('modelIndex')
+ 
+-        // remove price model from the chain
+-        def model = priceModel
+-        for (int i = 1; model != null; i++) {
+-            if (i == modelIndex) {
+-                model.next = model.next?.next
+-                break
+-            }
+-            model = model.next
+-        }
++            // remove price model from the chain
++            def model = priceModel
++            for (int i = 1; model != null; i++) {
++                if (i == modelIndex) {
++                    model.next = model.next?.next
++                    break
++                }
++                model = model.next
++            }
+ 
+-        render template: '/priceModel/model', 
+-				  model: [ model: priceModel, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
+-					  	   companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product,
+-						   priceModelData: priceModel ? setPriceModelData(priceModel) : null  ]
+-    }
++            render template: '/priceModel/model',
++                    model: [ model: priceModel, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product,
++                             priceModelData: priceModel ? setPriceModelData(priceModel) : null  ]
++        }
++    }
+ 
+ 	def refreshChainModel () {
+-		
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
+-		def startDate = new Date().parse(message(code: 'date.format'), params.startDate)
++        def startDate = new Date().parse(message(code: 'date.format'), params.startDate)
+-		def entityId = params.int('product.priceModelCompanyId')
+ 		def price = new PriceModelWS()
+ 		def defaultPrices = null
+ 
+-		boolean forceRefresh = params.int("forceRefreshModel") == 0
+-		if(forceRefresh) {
+-			boolean unsaved = false
+-			//verify if there are some unsaved prices
+-			def priceModel = PlanHelper.bindPriceModel(params)
+-			def model = priceModel
+-			while (model) {
+-				if(model.id == null || model.id == 0) {
+-					unsaved = true
+-					break
++//		boolean forceRefresh = params.int("forceRefreshModel") == 0
++//		if(forceRefresh && !wholesale) {
++//			boolean unsaved = false
++//			//verify if there are some unsaved prices
++//			def priceModel = PlanHelper.bindPriceModel(params)
++//			def model = priceModel
++//			while (model) {
++//				if(model.id == null || model.id == 0) {
++//					unsaved = true
++//					break
++//				}
++//				model = model.next
++//			}
++//
++//			if(unsaved) {
++//				throw new SessionInternalError("Unsaved company prices will be discard")
++//			}
++//		}
++
++        if (wholesale) {
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++
++                defaultPrices = dto.getWholeSalePricesForSelectedEntity(entityId)
++                if(!defaultPrices.isEmpty()) {
++                    price = defaultPrices?.get(startDate)
+-				}
++                }
+-				model = model.next
+-			}
++            }
+ 
+-			if(unsaved) {
+-				throw new SessionInternalError("Unsaved company prices will be discard")
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++
++            // if this action has been redirected from updated that means update was successful
++            if(params.int("updated") == 1) {
++                flash.message = 'product.updated'
++                flash.args = [ product.id ]
+-			}
++            }
+-		}
+ 
++            render template: '/priceModel/wholesale-model',
++                    model: [  model: price, priceModelData: price ? initPriceModelData(price) : null,
++                              startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                              companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        } else {
++            def entityId = params.int('product.priceModelCompanyId')
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
+ 
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-			if(!defaultPrices.isEmpty()) {
+-				price = defaultPrices?.get(startDate)
+-			}
+-		}
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++                if(!defaultPrices.isEmpty()) {
++                    price = defaultPrices?.get(startDate)
++                }
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
+ 
+-		// if this action has been redirected from updated that means update was successful
+-		if(params.int("updated") == 1) {
+-			flash.message = 'product.updated'
+-			flash.args = [ product.id ]
+-		}
++            // if this action has been redirected from updated that means update was successful
++            if(params.int("updated") == 1) {
++                flash.message = 'product.updated'
++                flash.args = [ product.id ]
++            }
+ 
+-		render template: '/priceModel/model', 
+-				  model: [  model: price, priceModelData: price ? initPriceModelData(price) : null, 
+-					  		startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
+-							companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
+-	}
++            render template: '/priceModel/model',
++                    model: [  model: price, priceModelData: price ? initPriceModelData(price) : null,
++                              startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                              companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        }
+ 
++	}
++
+     def addAttribute () {
+         def entityId = params.int('product.priceModelCompanyId')
+ 		def defaultPrices = null
+@@ -1955,7 +2071,7 @@
+             model = model.next
+         }
+ 
+-        render template: '/priceModel/model', 
++        render template: params.priceType  != null && params.priceType == "wholesale" ? '/priceModel/wholesale-model' : '/priceModel/model',
+ 				  model: [model: priceModel, startDate: startDate, models: defaultPrices,
+ 					  	  currencies: retrieveCurrencies(), priceModelData: priceModel ? initPriceModelData(priceModel) : null, 
+ 						  companies : retrieveChildCompanies(), product : product, allCompanies : retrieveCompanies()]
+@@ -1990,133 +2106,249 @@
+             model = model.next
+         }
+ 
+-        render template: '/priceModel/model', 
++        render template: params.priceType  != null && params.priceType == "wholesale" ? '/priceModel/wholesale-model' : '/priceModel/model',
+ 				  model: [ model: priceModel, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
+ 					  	   companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
+     }
+ 
+     def editDate () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
++        if (wholesale) {
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getWholeSalePricesForSelectedEntity(entityId)
++            }
++
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++
++            render template: '/priceModel/wholesale-model',
++                    model: [ startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        } else {
+-        def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
+ 
+-        def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
++            def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
+ 
+-        render template: '/priceModel/model', 
+-				  model: [ startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(), 
+-					  		companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
+-    }
++            render template: '/priceModel/model',
++                    model: [ startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        }
++    }
+ 
+     def addDate () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
++        if (wholesale) {
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getWholeSalePricesForSelectedEntity(entityId)
++            }
++
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.wholeSalePriceModelCompanyId = entityId
++
++            render template: '/priceModel/wholesale-model',
++                    model: [ model: new PriceModelWS(), models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        } else {
+-        def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		def product = new ItemDTOEx()
+-		product.id = params.int('product.id')
+-		product.priceModelCompanyId = entityId
++            def product = new ItemDTOEx()
++            product.id = params.int('product.id')
++            product.priceModelCompanyId = entityId
+ 
+-        render template: '/priceModel/model', 
+-				  model: [ model: new PriceModelWS(), models: defaultPrices, currencies: retrieveCurrencies(), 
+-					  		companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
+-    }
++            render template: '/priceModel/model',
++                    model: [ model: new PriceModelWS(), models: defaultPrices, currencies: retrieveCurrencies(),
++                             companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product  ]
++        }
++    }
+ 
+     def removeDate () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
+         def product = params."product.id" ? webServicesSession.getItem(params.int('product.id'), session['user_id'], null) : null
+         def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
+ 
++        if (wholesale) {
++            def entityId = params.int('product.wholeSalePriceModelCompanyId')
++            def defaultPrices = null
++
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getWholeSalePricesForSelectedEntity(entityId)
++            }
++
++            product.wholeSalePriceModelCompanyId = entityId
++
++            defaultPrices.remove(startDate)
++            product?.defaultWholeSalePrices?.clear()
++            product?.defaultWholeSalePrices = defaultPrices
++
++            if (SpringSecurityUtils.ifAllGranted("PRODUCT_41")) {
++                log.debug("saving changes to product ${product.id}")
++
++                webServicesSession.updateItem(product)
++
++                flash.message = 'product.updated'
++                flash.args = [ product.id ]
++
++            } else {
++                flash.message = 'product.update.access.denied'
++                flash.args = [ product.id ]
++            }
++
++            render template: '/priceModel/wholesale-model',
++                    model: [ models: defaultPrices, currencies: retrieveCurrencies(), companies : retrieveChildCompanies(),
++                             allCompanies : retrieveCompanies(), product : product  ]
++        } else {
+-		def entityId = params.int('product.priceModelCompanyId')
+-		def defaultPrices = null
++            def entityId = params.int('product.priceModelCompanyId')
++            def defaultPrices = null
+ 
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		product.priceModelCompanyId = entityId
++            product.priceModelCompanyId = entityId
+ 
+-		defaultPrices.remove(startDate)
+-		product?.defaultPrices?.clear()
+-		product?.defaultPrices = defaultPrices
++            defaultPrices.remove(startDate)
++            product?.defaultPrices?.clear()
++            product?.defaultPrices = defaultPrices
+ 
+-        if (SpringSecurityUtils.ifAllGranted("PRODUCT_41")) {
+-            log.debug("saving changes to product ${product.id}")
++            if (SpringSecurityUtils.ifAllGranted("PRODUCT_41")) {
++                log.debug("saving changes to product ${product.id}")
+ 
+-            webServicesSession.updateItem(product)
++                webServicesSession.updateItem(product)
+ 
+-            flash.message = 'product.updated'
+-            flash.args = [ product.id ]
++                flash.message = 'product.updated'
++                flash.args = [ product.id ]
+ 
+-        } else {
+-            flash.message = 'product.update.access.denied'
+-            flash.args = [ product.id ]
+-        }
++            } else {
++                flash.message = 'product.update.access.denied'
++                flash.args = [ product.id ]
++            }
+ 
+-        render template: '/priceModel/model', 
++            render template: params.priceType  != null && params.priceType == "wholesale" ? '/priceModel/wholesale-model' : '/priceModel/model',
+-				  model: [ models: defaultPrices, currencies: retrieveCurrencies(), companies : retrieveChildCompanies(), 
+-					  		allCompanies : retrieveCompanies(), product : product  ]
+-    }
++                    model: [ models: defaultPrices, currencies: retrieveCurrencies(), companies : retrieveChildCompanies(),
++                             allCompanies : retrieveCompanies(), product : product  ]
++        }
+ 
++    }
++
+     def saveDate () {
++        def wholesale = params.priceType  != null && params.priceType == "wholesale";
+         def product = params."product.id" ? webServicesSession.getItem(params.int('product.id'), session['user_id'], null) : null
+ 		def price = PlanHelper.bindPriceModel(params)
+         def startDate = DateTimeFormat.forPattern(message(code: 'date.format')).parseDateTime(params.startDate).toDate()
+-        def originalStartDate = new Date().parse(message(code: 'date.format'), params.originalStartDate)
++        def originalStartDate = params.originalStartDate == null ?:new Date().parse(message(code: 'date.format'), params.originalStartDate)
+ 
+-		def entityId = params.int('product.priceModelCompanyId')
++        def entityId = null;
+ 		def defaultPrices = null
+ 
++        if (wholesale) {
++            entityId = params.int('product.wholeSalePriceModelCompanyId')
+-		if(params.int('product.id')) {
+-			def dto = ItemDTO.get(params.int('product.id'))
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
++                defaultPrices = dto.getWholeSalePricesForSelectedEntity(entityId)
++            }
++
++            product.wholeSalePriceModelCompanyId = entityId
++
++            if(defaultPrices == null || defaultPrices.isEmpty()) {
++                defaultPrices = new TreeMap<Date, PriceModelWS>();
++            }
++
++            if(originalStartDate != null) {
++                defaultPrices.remove(originalStartDate)
++            }
++
++            defaultPrices.put(startDate, price)
++
++            product?.defaultWholeSalePrices = defaultPrices
++        } else {
++            entityId = params.int('product.priceModelCompanyId')
++            if(params.int('product.id')) {
++                def dto = ItemDTO.get(params.int('product.id'))
+-			defaultPrices = dto.getPricesForSelectedEntity(entityId)
+-		}
++                defaultPrices = dto.getPricesForSelectedEntity(entityId)
++            }
+ 
+-		product.priceModelCompanyId = entityId
++            product.priceModelCompanyId = entityId
+ 
+-		if(defaultPrices == null || defaultPrices.isEmpty()) {
+-			defaultPrices = new TreeMap<Date, PriceModelWS>();
+-		}
++            if(defaultPrices == null || defaultPrices.isEmpty()) {
++                defaultPrices = new TreeMap<Date, PriceModelWS>();
++            }
+ 
+-		if(originalStartDate != null) {
+-			defaultPrices.remove(originalStartDate)
+-		}
++            if(originalStartDate != null) {
++                defaultPrices.remove(originalStartDate)
++            }
+ 
+-		defaultPrices.put(startDate, price)
++            defaultPrices.put(startDate, price)
+ 
+-		product?.defaultPrices = defaultPrices
++            product?.defaultPrices = defaultPrices
++        }
+ 
+         if (SpringSecurityUtils.ifAllGranted("PRODUCT_41")) {
+             log.debug("saving changes to product ${product.id}")
+ 
+             webServicesSession.updateItem(product)
+ 
+-			// re get saved price models
++            // re get saved price models
++            if (wholesale) {
+-			redirect action : 'refreshChainModel', 
++                redirect action: 'refreshChainModel',
+-					 params : [ startDate : params.startDate, 'product.priceModelCompanyId' : entityId,
++                        params: [startDate        : params.startDate, 'product.wholeSalePriceModelCompanyId': entityId,
+-								forceRefreshModel : 1, 'product.id' : params.int('product.id'),
++                                 forceRefreshModel: 1, 'product.id': params.int('product.id'),
++                                 entityId         : entityId, updated: 1,
++                                 'priceType': "wholesale"]
++            }
++            else {
++                redirect action: 'refreshChainModel',
++                        params: [startDate        : params.startDate, 'product.who': entityId,
++                                 forceRefreshModel: 1, 'product.id': params.int('product.id'),
+-								entityId : entityId, updated : 1]
++                                 entityId         : entityId, updated: 1]
++            }
++
+         } else {
+             flash.message = 'product.update.access.denied'
+             flash.args = [ product.id ]
+         }
+ 
+-        render template: '/priceModel/model', 
++        if (wholesale) {
++            render template: '/priceModel/wholesale-model',
+-				  model: [ model: price, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(), 
++                    model: [model         : price, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
+-					  		companies : retrieveChildCompanies(), allCompanies : retrieveCompanies(), product : product,
++                            companies     : retrieveChildCompanies(), allCompanies: retrieveCompanies(), product: product,
++                            priceModelData: product?.defaultWholeSalePrices ? setPriceModelData(price) : null]
++        } else {
++            render template: '/priceModel/wholesale-model',
++                    model: [model         : price, startDate: startDate, models: defaultPrices, currencies: retrieveCurrencies(),
++                            companies     : retrieveChildCompanies(), allCompanies: retrieveCompanies(), product: product,
+-							priceModelData: product?.defaultPrices ? setPriceModelData(price) : null  ]
++                            priceModelData: product?.defaultPrices ? setPriceModelData(price) : null]
+-    }
++        }
++    }
+     /**
+     * Validate the selected companies for the product have a visibility for one of the selected categories
+     */
+@@ -2385,6 +2617,7 @@
+                          orderLineMetaFields: product.orderLineMetaFields,
+ 						 priceModelData: initPriceModelData(selectedPriceModel),
+ 						 defaultPrices : product?.defaultPrices,
++                         defaultWholeSalePrices : product?.defaultWholeSalePrices,
+ 						 entities : product?.entities,
+ 						 showEntityListAndGlobal : showEntityListAndGlobal,
+                          allowAssetManagement : allowAssetManagement,
+Index: src/java/com/sapienter/jbilling/server/order/task/CreateOrderForResellerTask.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/order/task/CreateOrderForResellerTask.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/order/task/CreateOrderForResellerTask.java	(revision )
+@@ -88,7 +88,8 @@
+ 		
+ 		OrderBL orderBL = new OrderBL();
+ 		//process lines to get entity specific prices
+-		orderBL.processLines(resellerOrder, reseller.getLanguageIdField(), entityId, reseller.getUserId(), reseller.getCurrencyId(), "");
++		orderBL.processWholeSaleLines(resellerOrder, reseller.getLanguageIdField(), entityId, reseller.getUserId(), reseller.getCurrencyId(), "",
++                event.getEntityId());
+ 		orderBL.set(resellerOrder);
+ 
+ 		try {
+Index: grails-app/views/priceModel/_wholesale-model.gsp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/views/priceModel/_wholesale-model.gsp	(revision )
++++ grails-app/views/priceModel/_wholesale-model.gsp	(revision )
+@@ -0,0 +1,248 @@
++%{--
++  JBILLING CONFIDENTIAL
++  _____________________
++
++  [2003] - [2012] Enterprise jBilling Software Ltd.
++  All Rights Reserved.
++
++  NOTICE:  All information contained herein is, and remains
++  the property of Enterprise jBilling Software.
++  The intellectual and technical concepts contained
++  herein are proprietary to Enterprise jBilling Software
++  and are protected by trade secret or copyright law.
++  Dissemination of this information or reproduction of this material
++  is strictly forbidden.
++  --}%
++
++<%@ page import="com.sapienter.jbilling.server.user.db.CompanyDTO;com.sapienter.jbilling.common.CommonConstants; com.sapienter.jbilling.server.pricing.PriceModelWS; com.sapienter.jbilling.server.pricing.db.PriceModelDTO; com.sapienter.jbilling.server.pricing.PriceModelBL; com.sapienter.jbilling.server.pricing.db.ChainPosition; org.apache.commons.lang.WordUtils; com.sapienter.jbilling.server.pricing.db.PriceModelStrategy" %>
++
++<%--
++  Editor form for price models.
++
++  @author Brian Cowdery
++  @since  02-Feb-2011
++--%>
++
++%{--include the javascript for checking whether the date can be parsed or not--}%
++
++<script type="text/javascript">
++    var startDateFormat= "<g:message code="date.format"/>";
++</script>
++
++<!-- model and date to display -->
++<g:set var="startDate" value="${startDate ?: new Date()}"/>
++<g:set var="model" value="${model ?: models ? PriceModelBL.getWsPriceForDate(models, startDate) : null}"/>
++<!-- local variables -->
++<g:set var="types" value="${PriceModelStrategy.getStrategyByChainPosition(ChainPosition.START)}"/>
++<g:set var="type" value="${model?.type ? PriceModelStrategy.valueOf(model.type) : types?.asList()?.first()}"/>
++<g:set var="templateName" value="${WordUtils.uncapitalize(WordUtils.capitalizeFully(type.name(), ['_'] as char[]).replaceAll('_',''))}"/>
++<g:set var="modelIndex" value="${0}"/>
++<g:set var="currencies" value="${CompanyDTO.get(session['company_id'] as Integer)?.currencies?.sort { it.description}}"/>
++
++<g:set var="isNew" value="${model == null || model.id == 0}"/>
++<g:set var="isNewProduct" value="${!product || !product?.id || product?.id == 0}"/>
++
++<div id="wholesale-priceModel">
++    <g:if test="${!isNew && models}">
++    <div id="timeline">
++        <div class="form-columns">
++            <ul>
++                <g:each var="modelEntry" in="${models.entrySet()}">
++                    <g:if test="${model.equals(modelEntry.getValue()) || startDate.equals(modelEntry.getKey())}">
++                        <li class="current">
++                            <g:set var="startDate" value="${modelEntry.getKey()}"/>
++                            <g:set var="date" value="${formatDate(date: startDate)}"/>
++                            <a onclick="editDate('${date}')">${date}</a>
++                        </li>
++                    </g:if>
++                    <g:else>
++                        <li>
++                            <g:set var="date" value="${formatDate(date: modelEntry.getKey())}"/>
++                            <a onclick="editDate('${date}')">${date}</a>
++                        </li>
++                    </g:else>
++                </g:each>
++
++                <g:if test="${!models.containsKey(startDate)}">
++                    <li class="current">
++                        <g:set var="date" value="${formatDate(date: startDate)}"/>
++                        <a onclick="editDate('${date}')">${date}</a>
++                    </li>
++                </g:if>
++
++
++                <li class="new">
++                    <a onclick="addDate()"><g:message code="button.add.price.date"/></a>
++                </li>
++            </ul>
++        </div>
++    </div>
++    </g:if>
++
++    <!-- root price model -->
++    <div class="form-columns">
++        <div class="column">
++
++            <g:if test="${startDate.equals(CommonConstants.EPOCH_DATE)}">
++                <g:applyLayout name="form/text">
++                    <content tag="label"><g:message code="plan.item.start.date"/></content>
++                    <g:formatDate date="${startDate}" formatName="date.format"/>
++                    <g:hiddenField name="startDate" value="${formatDate(date: startDate, formatName: 'date.format')}"/>
++                </g:applyLayout>
++            </g:if>
++            <g:else>
++                <g:applyLayout name="form/date">
++                    <content tag="label"><g:message code="plan.item.start.date"/></content>
++                    <content tag="label.for">startDate</content>
++                    <content tag="label.class">toolTipElement</content>
++                    <content tag="label.title"><g:message code="price.strategy.COMMON.start_date.tooltip.message"/></content>
++                    <g:textField onfocus="disableToolTip(this.id);" class="field toolTipElement" title="${message(code: 'price.strategy.COMMON.start_date.tooltip.message')}" id="startDate" name="startDate" value="${formatDate(date: startDate, formatName: 'datepicker.format')}" onblur="isValidStartDate(this);" />
++                    <g:hiddenField name="originalStartDate" value="${formatDate(date: startDate, formatName: 'date.format')}"/>
++                </g:applyLayout>
++            </g:else>
++			<g:hiddenField name="wholeSalePriceModelCompanyId" value="${product?.wholeSalePriceModelCompanyId}"/>
++			<g:hiddenField name="forceRefreshModel" value="${0}"/>
++			<!-- Company drop down -->
++			<g:isRoot>
++                <g:applyLayout name="form/select">
++                    <content tag="label"><g:message code="item.price.company"/></content>
++                    <content tag="label.for">product.priceModelCompanyId</content>
++                    <content tag="label.title"><g:message code="price.strategy.COMMON.company.tooltip.message"/></content>
++                    <content tag="label.class">toolTipElement</content>
++                    <g:select name="product.wholeSalePriceModelCompanyId"
++                            class="toolTipElement"
++                            title="${message(code: 'price.strategy.COMMON.company.tooltip.message')}"
++                            from="${allCompanies.findAll({c -> c.parent != null})}"
++                            optionKey="id" optionValue="description"
++                            value="${product?.wholeSalePriceModelCompanyId}"
++                            onChange="refreshChainModel();"/>
++                </g:applyLayout>
++			</g:isRoot>
++			<g:isNotRoot>
++				<g:hiddenField name="product.wholeSalePriceModelCompanyId" value="${product?.wholeSalePriceModelCompanyId}"/>
++			</g:isNotRoot>
++            %{-- Div for help dialog pop-up --}%
++            <div id="${type?.name() + modelIndex}"
++                 title="${message(code: 'price.strategy.' + type?.name() + '.help.dialog.title')}"
++                 class="help-dialog">
++                <g:render template="/priceModel/strategy/${templateName}_help"/>
++            </div>
++
++            <g:render id="strategyTemplate" template="/priceModel/strategy/${templateName}" model="[model: model, type: type, modelIndex: modelIndex, types: types, currencies: currencies]"/>
++
++        </div>
++        <div class="column">
++            <g:render template="/priceModel/attributes" model="[model: model, type: type, modelIndex: modelIndex, templateName: templateName, priceModelData: priceModelData]"/>
++        </div>
++    </div>
++
++    <!-- price models in chain -->
++    <g:set var="types" value="${PriceModelStrategy.getStrategyByChainPosition(ChainPosition.MIDDLE, ChainPosition.END)}"/>
++    <g:set var="next" value="${model?.next}"/>
++    <g:while test="${next}">
++        <g:set var="type" value="${next?.type ? PriceModelStrategy.valueOf(next?.type) : types?.asList()?.first()}"/>
++        <g:set var="templateName" value="${WordUtils.uncapitalize(WordUtils.capitalizeFully(type.name(), ['_'] as char[]).replaceAll('_',''))}"/>
++        <g:set var="modelIndex" value="${modelIndex + 1}"/>
++
++        <div class="form-columns">
++            %{-- Div for help dialog pop-up chained models--}%
++            <div id="${type?.name() + modelIndex}"
++                 title="${message(code: 'price.strategy.' + type?.name() + '.help.dialog.title')}"
++                 class="help-dialog">
++                <g:render template="/priceModel/strategy/${templateName}_help"/>
++            </div>
++            <hr/>
++            <div class="left row tooltipElement" style="padding-left: 5em">
++                <a onclick="removeChainModel(this, ${modelIndex});">
++                    <img src="${resource(dir:'images', file:'cross.png')}" alt="remove" title="${message(code: 'price.strategy.COMMON.pricing.remove.chain.tooltip.message')}"/>
++                </a>
++            </div>
++            <div class="column">
++                <g:render template="/priceModel/strategy/${templateName}" model="[model: next, type: type, modelIndex: modelIndex, types: types, currencies: currencies]"/>
++            </div>
++            <div class="column">
++                <g:render template="/priceModel/attributes" model="[model: next, type: type, modelIndex: modelIndex,  priceModelData: priceModelData]"/>
++            </div>
++        </div>
++
++        <g:set var="next" value="${next.next}"/>
++    </g:while>
++
++    <!-- place holder for generated help dialogs -->
++    <div id="help-dialog-placeholder"></div>
++
++    <!-- spacer -->
++    <div>
++        <br/>&nbsp;
++    </div>
++
++    <!-- controls -->
++    <div class="btn-row">
++        <a class="submit add" onclick="addChainModel()"><span><g:message code="button.add.chain"/></span></a>
++
++		<g:if test="${!hideSaveOption && !(!isNew && models) && !isNewProduct}">
++		 	<a class="submit save" onclick="saveDate()"><span><g:message code="button.save"/></span></a>
++		</g:if>
++		 
++        <g:if test="${!isNew && models}">
++            <a class="submit save" onclick="saveDate()"><span><g:message code="button.save"/></span></a>
++            <a class="submit delete" onclick="removeDate()"><span><g:message code="button.delete"/></span></a>
++        </g:if>
++
++        <g:hiddenField name="attributeIndex"/>
++        <g:hiddenField name="modelIndex"/>
++        <g:hiddenField name="priceType" value="wholesale"/>
++    </div>
++
++
++    <script type="text/javascript">
++        $(document).ready(function() {
++
++            addDataTooltip();
++
++            $('.help-dialog').dialog({
++                appendTo: "#help-dialog-placeholder",
++                autoOpen: false,
++                height: 380,
++                width: 550,
++                resizable: false,
++                modal: true,
++                // Workaround for modal dialog dragging jumps
++                create: function(event){
++                    $(event.target).parent().css('position', 'fixed');
++                },
++                buttons: {
++                    "${g.message(code: 'button.close')}": function() {
++                        $( this ).dialog( "close" );
++                    }
++                }
++            });
++            // Adjust dynamic attributes padding
++            $('.dynamicAttrs').removeClass().addClass("product-price-attribute-dynamic")
++        });
++
++        /**
++         * Re-render the pricing model form when the strategy is changed
++         */
++        $(function() {
++            $('#wholesale-priceModel .model-type').change(function() {
++                if(!isValidStartDate($('#startDate'))) {
++                    return false;
++                }
++                else {
++                    updateStrategy();
++                }
++            });
++        })
++
++        $('#wholesale-priceModel').unbind('mouseover');
++
++        $('#wholesale-priceModel').mouseover(function() {
++            $('#priceModel :input').attr('disabled', true);
++            $('#product.priceModelCompanyId').attr('disabled', false);
++            $('#wholesale-priceModel :input').attr('disabled', false);
++            priceModelToChange = '#wholesale-priceModel';
++        });
++
++    </script>
++</div>
+Index: src/java/com/sapienter/jbilling/server/item/ItemBL.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- src/java/com/sapienter/jbilling/server/item/ItemBL.java	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ src/java/com/sapienter/jbilling/server/item/ItemBL.java	(revision )
+@@ -29,6 +29,7 @@
+ import java.util.Set;
+ import java.util.SortedMap;
+ import java.util.TreeMap;
++import java.util.stream.Collectors;
+ 
+ import com.sapienter.jbilling.common.Util;
+ import com.sapienter.jbilling.server.metafields.EntityType;
+@@ -343,6 +344,16 @@
+                 }
+             }
+ 
++        if (dto.getDefaultWholeSalePricesByCompany(dto.getWholesalePriceModelCompanyId()) != null) {
++            updateDefaultWholesalePrice(dto);
++            if (item.getDefaultWholeSalePrices() != null && !item.getDefaultWholeSalePrices().isEmpty()) {
++                SortedMap<Date, PriceModelDTO> prices = item.getDefaultWholeSalePricesByCompany(dto.getWholesalePriceModelCompanyId());
++                if(prices != null) {
++                    PriceModelBL.validateAttributes(prices.values());
++                }
++            }
++        }
++
+         item.setActiveSince(dto.getActiveSince());
+         item.setActiveUntil(dto.getActiveUntil());
+         item.setReservationDuration(dto.getReservationDuration());
+@@ -350,7 +361,6 @@
+         itemDas.save(item);
+ 
+         deleteUnusedProductOrderLineMetaFields(unusedMetaFieldIds);
+-        
+         LOG.debug("Processing ItemUpdatedEvent using entity id:" + item.getEntityId());
+         ItemUpdatedEvent itemUpdatedEvent = new ItemUpdatedEvent(item);
+         EventManager.process(itemUpdatedEvent);
+@@ -488,6 +498,84 @@
+         }
+     }
+ 
++    /**
++     * Updates the price of this item to that of the given ItemDTO. This method
++     * handles updates to the price using both the items default price model, and
++     * the transient price attribute.
++     *
++     * If the given dto has a price through {@link ItemDTO#getPrice()}, then the
++     * default price model rate will be set to the price. Otherwise the given dto's
++     * price model is used to update.
++     *
++     * @param dto item holding the updates to apply to this item
++     */
++    private void updateDefaultWholesalePrice(ItemDTO dto) {
++        //Find the price in item and dto with respect to company
++        SortedMap<Date, PriceModelDTO> itemPrices = null;
++        SortedMap<Date, PriceModelDTO> dtoPrices = null;
++
++        itemPrices = item.getDefaultWholeSalePricesByCompany(dto.getWholesalePriceModelCompanyId());
++        dtoPrices = dto.getDefaultWholeSalePricesByCompany(dto.getWholesalePriceModelCompanyId());
++
++        if (itemPrices == null || itemPrices.isEmpty()) {
++            // new default price
++            if (dtoPrices != null || !dtoPrices.isEmpty()) {
++                //itemPrices.clear();
++                itemPrices = new TreeMap<Date, PriceModelDTO>();
++                itemPrices.putAll(dtoPrices);
++
++            } else if (dtoPrices != null) {
++                itemPrices.put(CommonConstants.EPOCH_DATE, getDefaultPrice(dto.getPrice(),dto.isPercentage()));
++            }
++
++        } else {
++            // update existing default price
++            if (dtoPrices != null || !dtoPrices.isEmpty()) {
++                itemPrices.clear();
++
++                itemPrices.putAll(dtoPrices);
++
++            } else if (dtoPrices != null) {
++                if (dtoPrices.size() == 1) {
++
++                    itemPrices.get(0).setRate(dto.getPrice());
++
++                } else {
++                    // cannot use legacy price column, there is more than 1 price that can be updated
++                    // we should be updating the individual price model instead.
++                    throw new SessionInternalError("Item uses multiple dated prices, cannot use WS price.");
++                }
++            }
++        }
++
++        // default price currency should always be the entity currency
++        if (itemPrices != null) {
++            // TODOs
++            for (PriceModelDTO price : itemPrices.values()) {
++                if (price.getCurrency() == null) {
++                    if(item.getEntity() != null) {
++                        price.setCurrency(item.getEntity().getCurrency());
++                    } else {
++                        if(item.getEntities().iterator().next().getParent()!=null){
++                            price.setCurrency(item.getEntities().iterator().next().getParent().getCurrency());
++                        }else{
++                            price.setCurrency(item.getEntities().iterator().next().getCurrency());
++                        }
++                    }
++                }
++            }
++        }
++        CompanyDTO company = dto.getWholesalePriceModelCompanyId() != null ? new CompanyDAS().find(dto.getWholesalePriceModelCompanyId()) : null;
++
++        if(itemPrices == null || itemPrices.isEmpty()) {
++            // default prices for given company were removed. Remove price entry.
++            item.removeDefaultWholeSalePricesByCompany(company);
++        } else {
++            // Now set the itemPrices in item
++            item.setDefaultWholeSalePricesByCompany(itemPrices, company);
++        }
++    }
++
+     private void updateTypes(ItemDTO dto)
+             {
+         // update the types relationship
+@@ -619,7 +707,45 @@
+         return BigDecimal.ZERO;
+     }
+ 
++    // return the price calculated with/without quantity (it's depends of PriceModel type)
++    public BigDecimal getWholeSalePriceByCurrency(Date date, ItemDTO item, Integer userId, Integer currencyId, BigDecimal quantity,
++                                                  OrderDTO order, OrderLineDTO orderLine, Integer resellerOrderId)  {
++        if (item.getDefaultPrices() != null && !item.getDefaultPrices().isEmpty()) {
++            // empty usage for default pricing
++            Usage usage = new Usage();
++            usage.setUserId(userId);
++            usage.setItemId(item.getId());
++            usage.setAmount(BigDecimal.ZERO);
++            usage.setQuantity(BigDecimal.ZERO);
+ 
++            // calculate default price from strategy
++            PricingResult result = new PricingResult(item.getId(), userId, currencyId);
++            List<PricingField> fields = Collections.emptyList();
++
++            // price for today
++            PriceModelDTO priceModel = item.getPrice(new Date(), item.getPriceModelCompanyId());
++
++            if (priceModel != null) {
++
++                if(priceModel.getType().equals(PriceModelStrategy.LINE_PERCENTAGE)) {
++
++                    item.setIsPercentage(true);
++                    return priceModel.getRate();
++
++                } else if(priceModel.getType().equals(PriceModelStrategy.GRADUATED) || priceModel.getType().equals(PriceModelStrategy.GRADUATED_RATE_CARD)) {
++
++                    priceModel.applyTo(null, null, quantity, result, fields, usage, false, date);
++
++                } else {
++
++                    priceModel.applyTo(null, null ,BigDecimal.ONE, result, fields, usage, false, date);
++                }
++                return result.getPrice() == null ? BigDecimal.ZERO : result.getPrice();
++            }
++        }
++        return BigDecimal.ZERO;
++    }
++
+     public BigDecimal getPrice(Integer userId, BigDecimal quantity, Integer entityId) throws SessionInternalError {
+         UserBL user = new UserBL(userId);
+         return getPrice(userId, user.getCurrencyId(), quantity, entityId, null, null, false, null);
+@@ -680,6 +806,80 @@
+     }
+ 
+     /**
++     * Will find the right price considering the user's special prices and which
++     * currencies had been entered in the prices table.
++     *
++     *
++     * @param userId user id
++     * @param currencyId currency id
++     * @param entityId entity id
++     * @param order order being created or edited, maybe used for additional pricing calculations    @return The price in the requested currency. It always returns a price,
++     * */
++    public BigDecimal getWholeSalePrice(Integer userId, Integer currencyId, BigDecimal quantity, Integer entityId, OrderDTO order, OrderLineDTO orderLine,
++                               boolean singlePurchase, Date eventDate, Integer resellerEntityId) throws SessionInternalError {
++
++        if (currencyId == null || entityId == null) {
++            throw new SessionInternalError("Can't get a price with null parameters. currencyId = " + currencyId +
++                    " entityId = " + entityId);
++        }
++
++        CurrencyBL currencyBL;
++        try {
++            currencyBL = new CurrencyBL(currencyId);
++            priceCurrencySymbol = currencyBL.getEntity().getSymbol();
++        } catch (Exception e) {
++            throw new SessionInternalError(e);
++        }
++
++        Date pricingDate = ( null != eventDate ? eventDate : ( null != order ? order.getPricingDate() : null ));
++
++        if (item.getDefaultWholeSalePricesByCompany(resellerEntityId) != null) {
++            // set price model company id
++            item.setPriceModelCompanyId(resellerEntityId);
++
++            // default "simple" price
++            BigDecimal price = getPriceByCurrency(pricingDate, item, userId, currencyId, quantity, order, orderLine);
++
++            // run a plug-in with external logic (rules), if available
++            try {
++                PluggableTaskManager<IPricing> taskManager
++                        = new PluggableTaskManager<IPricing>(entityId, Constants.PLUGGABLE_TASK_ITEM_PRICING);
++                IPricing myTask = taskManager.getNextClass();
++
++                while(myTask != null) {
++                    price = myTask.getPrice(item, quantity, userId, currencyId, pricingFields, price, order, orderLine, singlePurchase, eventDate);
++                    myTask = taskManager.getNextClass();
++                }
++            } catch (Exception e) {
++                throw new SessionInternalError("Item pricing task error", ItemBL.class, e);
++            }
++
++            return price;
++        } else {
++            // set price model company id
++            item.setPriceModelCompanyId(entityId);
++            // default "simple" price
++            BigDecimal price = getPriceByCurrency(pricingDate, item, userId, currencyId, quantity, order, orderLine);
++
++            // run a plug-in with external logic (rules), if available
++            try {
++                PluggableTaskManager<IPricing> taskManager
++                        = new PluggableTaskManager<IPricing>(entityId, Constants.PLUGGABLE_TASK_ITEM_PRICING);
++                IPricing myTask = taskManager.getNextClass();
++
++                while(myTask != null) {
++                    price = myTask.getPrice(item, quantity, userId, currencyId, pricingFields, price, order, orderLine, singlePurchase, eventDate);
++                    myTask = taskManager.getNextClass();
++                }
++            } catch (Exception e) {
++                throw new SessionInternalError("Item pricing task error", ItemBL.class, e);
++            }
++
++            return price;
++        }
++    }
++
++    /**
+      * Will find the right price considering the user's special prices, 
+      * currencies that have been entered in the prices table 
+      * and the mediation order Event Date.
+@@ -834,6 +1034,9 @@
+         dto.setPriceModelCompanyId(entityId);
+         dto.setDefaultPrices(item.getDefaultPrices());
+ 
++        dto.setWholesalePriceModelCompanyId(item.getWholesalePriceModelCompanyId());
++        dto.setDefaultWholeSalePrices(item.getDefaultWholeSalePrices());
++
+         // calculate a true price using the pricing plug-in, pricing takes into
+         // account plans, special prices and the quantity of the item being purchased
+         if (currencyId != null) {
+@@ -890,6 +1093,110 @@
+         return dto;
+     }
+ 
++    /**
++     * Returns an ItemDTO constructed for the given language and entity, priced for the
++     * given user, currency and the amount being purchased.
++     *
++     * If an order is given, then the order quantities will impact the price calculations
++     * for item prices that include usage.
++     *
++     *
++     *
++     *
++     * @param languageId id of the users language
++     * @param userId id of the user purchasing the item
++     * @param entityId id of the entity
++     * @param currencyId id of the currency
++     * @param quantity quantity being purchased
++     * @param order order that this item is to be added to. may be null if no order operation.
++     * @return item dto
++     * @throws SessionInternalError if an internal exception occurs processing request
++     */
++    public ItemDTO getWholeSaleDTO(Integer languageId, Integer userId, Integer entityId, Integer currencyId, BigDecimal quantity,
++                          OrderDTO order, OrderLineDTO orderLine, boolean singlePurchase, Date eventDate, Integer resellerEntityId) throws SessionInternalError {
++
++        ItemDTO dto = new ItemDTO(
++                item.getId(),
++                item.getInternalNumber(),
++                item.getGlCode(),
++                item.getEntity(),
++                item.getDescription(languageId),
++                item.getDeleted(),
++                currencyId,
++                null,
++                item.getPercentage(),
++                null, // to be set right after
++                item.getHasDecimals(),
++                item.getAssetManagementEnabled(),item.isPercentage());
++
++        // if item is also attached to some child entities
++        dto.setEntities(item.getEntities());
++
++        dto.setGlobal(item.isGlobal());
++
++        // set priceModelCompany for which prices must be loaded
++        dto.setPriceModelCompanyId(entityId);
++        dto.setDefaultPrices(item.getDefaultPrices());
++
++        dto.setWholesalePriceModelCompanyId(item.getWholesalePriceModelCompanyId());
++        dto.setDefaultWholeSalePrices(item.getDefaultWholeSalePrices());
++
++        // calculate a true price using the pricing plug-in, pricing takes into
++        // account plans, special prices and the quantity of the item being purchased
++        if (currencyId != null) {
++            dto.setPrice(getWholeSalePrice(userId, currencyId, quantity, entityId, order, orderLine, singlePurchase, eventDate, resellerEntityId));
++
++            if (item.isPercentage()) {
++                dto.setPercentage(dto.getPrice());
++                dto.setIsPercentage(true);
++            } else {
++                dto.setPercentage(null);
++                dto.setIsPercentage(false);
++            }
++        }
++
++        // set the types
++        Integer types[] = new Integer[item.getItemTypes().size()];
++        int n = 0;
++        for (ItemTypeDTO type : item.getItemTypes()) {
++            types[n++] = type.getId();
++            dto.setOrderLineTypeId(type.getOrderLineTypeId());
++        }
++        dto.setTypes(types);
++
++        // set excluded types
++        Integer excludedTypes[] = new Integer[item.getExcludedTypes().size()];
++        int i = 0;
++        for (ItemTypeDTO type : item.getExcludedTypes()) {
++            excludedTypes[i++] = type.getId();
++        }
++        dto.setExcludedTypeIds(excludedTypes);
++
++        // set account types
++        dto.setStandardAvailability(item.isStandardAvailability());
++        Integer accountTypes[] = new Integer[item.getAccountTypeAvailability().size()];
++        int j = 0;
++        for (AccountTypeDTO type : item.getAccountTypeAvailability()) {
++            accountTypes[j++] = type.getId();
++        }
++        dto.setAccountTypeIds(accountTypes);
++
++        dto.setMetaFields(item.getMetaFields());
++        dto.setDependencies(item.getDependencies());
++        dto.setOrderLineMetaFields(item.getOrderLineMetaFields());
++
++        dto.setActiveSince(item.getActiveSince());
++        dto.setActiveUntil(item.getActiveUntil());
++
++        dto.setStandardPartnerPercentage(item.getStandardPartnerPercentage());
++        dto.setMasterPartnerPercentage(item.getMasterPartnerPercentage());
++        dto.setReservationDuration(Util.convertFromMsToMinutes(item.getReservationDuration()));
++
++        LOG.debug("Got item: %s , price: %s", dto.getId(), dto.getPrice());
++
++        return dto;
++    }
++
+     public static final ItemDTO getDTO(ItemDTOEx other) {
+         ItemDTO retValue = new ItemDTO();
+         CompanyDAS companyDAS = new CompanyDAS();
+@@ -958,6 +1265,11 @@
+        	CompanyDTO priceModelCompany = other.getPriceModelCompanyId() != null ? companyDAS.find(other.getPriceModelCompanyId()) : null;
+         retValue.setDefaultPricesByCompany(PriceModelBL.getDTO(other.getDefaultPrices()), priceModelCompany);
+         retValue.setPriceModelCompanyId(other.getPriceModelCompanyId());
++        CompanyDTO wholesalePriceModelCompany = other.getWholeSalePriceModelCompanyId() != null ? companyDAS.find(other.getWholeSalePriceModelCompanyId()) : null;
++        if (wholesalePriceModelCompany != null) {
++            retValue.setDefaultWholeSalePricesByCompany(PriceModelBL.getDTO(other.getDefaultWholeSalePrices()), wholesalePriceModelCompany);
++            retValue.setWholesalePriceModelCompanyId(other.getWholeSalePriceModelCompanyId());
++        }
+ 
+         retValue.setMasterPartnerPercentage(other.getMasterPartnerPercentageAsDecimal());
+         retValue.setStandardPartnerPercentage(other.getStandardPartnerPercentageAsDecimal());
+@@ -1054,7 +1366,8 @@
+         // Get price of current company if not found get global price
+         retValue.setPriceModelCompanyId(other.getPriceModelCompanyId());
+         SortedMap<Date, PriceModelDTO> prices = other.getDefaultPricesByCompany(other.getPriceModelCompanyId());
++        SortedMap<Date, PriceModelDTO> wholesalePrices = other.getDefaultWholeSalePricesWithoutCompany();
+-        
++
+         if(prices == null) {
+         	prices = other.getGlobalDefaultPrices();
+         	retValue.setPriceModelCompanyId(null);
+@@ -1066,6 +1379,12 @@
+         	retValue.setDefaultPrices(PriceModelBL.getWS(prices));
+ 	        // today's price
+ 	        retValue.setDefaultPrice(PriceModelBL.getWsPriceForDate(retValue.getDefaultPrices(), new Date()));
++        }
++
++        if(wholesalePrices != null) {
++            retValue.setDefaultWholeSalePrices(PriceModelBL.getWS(wholesalePrices));
++            // today's price
++            retValue.setDefaultWholeSalePrice(PriceModelBL.getWsPriceForDate(retValue.getDefaultWholeSalePrices(), new Date()));
+         }
+ 
+         retValue.setStandardPartnerPercentage(other.getStandardPartnerPercentage());
+Index: grails-app/views/priceModel/_model.gsp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- grails-app/views/priceModel/_model.gsp	(revision 2b3ddec459da39e6ebefd97f3797bf02fd8185d0)
++++ grails-app/views/priceModel/_model.gsp	(revision )
+@@ -192,11 +192,11 @@
+ 
+         <g:hiddenField name="attributeIndex"/>
+         <g:hiddenField name="modelIndex"/>
++        <g:hiddenField name="priceType" value="retail"/>
+     </div>
+ 
+ 
+     <script type="text/javascript">
+-
+         $(document).ready(function() {
+ 
+             addDataTooltip();
+@@ -226,7 +226,7 @@
+          * Re-render the pricing model form when the strategy is changed
+          */
+         $(function() {
+-            $('.model-type').change(function() {
++            $('#priceModel .model-type').change(function() {
+                 if(!isValidStartDate($('#startDate'))) {
+                     return false;
+                 }
+@@ -236,41 +236,49 @@
+             });
+         });
+ 
++
++        $('#priceModel').unbind('mouseover');
++
++        $('#priceModel').mouseover(function() {
++            $('#priceModel :input').attr('disabled', false);
++            $('#wholesale-priceModel :input').attr('disabled', true);
++            priceModelToChange = '#priceModel';
++        });
++
+         function updateStrategy() {
+             $.ajax({
+                 type: 'POST',
+                 url: '${createLink(action: 'updateStrategy')}',
+-                data: $('#priceModel').parents('form').serialize(),
+-                success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+             });
+         }
+ 
+         function editDate(date) {
+-            $('#startDate').val(date);
+-
++            $(priceModelToChange).find('#startDate').val(date);
+             $.ajax({
+-                       type: 'POST',
+-                       url: '${createLink(action: 'editDate')}',
++                type: 'POST',
++                url: '${createLink(action: 'editDate')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+-                   });
++            });
+         }
+ 
+         function addDate() {
+             $.ajax({
+-                       type: 'POST',
+-                       url: '${createLink(action: 'addDate')}',
++                type: 'POST',
++                url: '${createLink(action: 'addDate')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+-                   });
++            });
+         }
+ 
+         function removeDate() {
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'removeDate')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
+@@ -281,8 +289,8 @@
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'saveDate')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
+@@ -290,8 +298,8 @@
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'addChainModel')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
+@@ -301,8 +309,8 @@
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'removeChainModel')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
+@@ -313,8 +321,8 @@
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'addAttribute')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
+@@ -325,8 +333,8 @@
+             $.ajax({
+                        type: 'POST',
+                        url: '${createLink(action: 'removeAttribute')}',
+-                       data: $('#priceModel').parents('form').serialize(),
+-                       success: function(data) { $('#priceModel').replaceWith(data); }
++                data: $(priceModelToChange).parents('form').serialize(),
++                success: function(data) {$(priceModelToChange).replaceWith(data);}
+                    });
+         }
+ 
